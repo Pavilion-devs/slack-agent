@@ -12,9 +12,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.core.config import settings
 from src.models.schemas import SupportMessage, MessageCategory, UrgencyLevel
-from src.simple_workflow import simple_workflow
-from src.integrations.ollama_client import ollama_client
-from src.integrations.vector_store import vector_store
+from src.workflows.improved_workflow import ImprovedWorkflow
+from src.core.rag_system import rag_system
+from src.agents.rag_agent import RAGAgent
 
 
 st.set_page_config(
@@ -96,12 +96,22 @@ def show_test_agent():
                             st.subheader("📊 Processing Details")
                             
                             st.write(f"**Escalated:** {'Yes' if result['escalated'] else 'No'}")
+                            if result['escalated'] and result.get('escalation_reason'):
+                                st.write(f"**Escalation Reason:** {result['escalation_reason']}")
                             st.write(f"**Processing Time:** {result['processing_time']:.2f}s" if result["processing_time"] else "N/A")
                             
                             st.write("**Agents Used:**")
                             for i, agent in enumerate(result["agents_used"]):
                                 confidence = result["confidence_scores"][i] if i < len(result["confidence_scores"]) else 0
                                 st.write(f"• {agent}: {confidence:.2f}")
+                            
+                            # Show metadata if available
+                            if result.get('metadata'):
+                                metadata = result['metadata']
+                                if metadata.get('frameworks_detected'):
+                                    st.write(f"**Frameworks Detected:** {', '.join(metadata['frameworks_detected'])}")
+                                if metadata.get('intent_classified'):
+                                    st.write(f"**Intent:** {metadata['intent_classified']}")
                     
                 except Exception as e:
                     st.error(f"❌ Error testing agent: {str(e)}")
@@ -134,6 +144,10 @@ def show_test_agent():
 async def test_agent_workflow(message: str, category: str = "Auto-detect", urgency: str = "Auto-detect"):
     """Test the agent workflow with a message."""
     try:
+        # Initialize RAG system if needed
+        if not rag_system.is_initialized:
+            await rag_system.initialize()
+        
         # Create test support message
         test_message = SupportMessage(
             message_id=f"test_{datetime.now().timestamp()}",
@@ -150,25 +164,21 @@ async def test_agent_workflow(message: str, category: str = "Auto-detect", urgen
         if urgency != "Auto-detect":
             test_message.urgency_level = UrgencyLevel(urgency)
         
-        # Process through workflow
-        final_state = await simple_workflow.process_message(test_message)
-        
-        # Get the best response
-        best_response = None
-        if final_state.agent_responses:
-            non_intake_responses = [r for r in final_state.agent_responses if r.agent_name != "intake_agent"]
-            if non_intake_responses:
-                best_response = max(non_intake_responses, key=lambda r: r.confidence_score)
+        # Process through improved workflow
+        workflow = ImprovedWorkflow()
+        start_time = datetime.now()
+        response = await workflow.process_message(test_message)
+        processing_time = (datetime.now() - start_time).total_seconds()
         
         return {
-            "final_response": final_state.final_response or "No response generated",
-            "escalated": final_state.escalated,
-            "agents_used": [r.agent_name for r in final_state.agent_responses],
-            "confidence_scores": [r.confidence_score for r in final_state.agent_responses],
-            "processing_time": (
-                final_state.processing_completed - final_state.processing_started
-            ).total_seconds() if final_state.processing_completed else None,
-            "sources": best_response.sources if best_response else []
+            "final_response": response.response_text,
+            "escalated": response.should_escalate,
+            "agents_used": [response.agent_name],
+            "confidence_scores": [response.confidence_score],
+            "processing_time": processing_time,
+            "sources": response.sources if response.sources else [],
+            "escalation_reason": response.escalation_reason,
+            "metadata": response.metadata if hasattr(response, 'metadata') else {}
         }
         
     except Exception as e:
@@ -183,21 +193,44 @@ def show_system_health():
     # Health check function
     async def check_system_health():
         try:
-            ollama_healthy = await ollama_client.health_check()
-            vector_healthy = await vector_store.health_check()
-            workflow_healthy = await simple_workflow.health_check()
+            # Check RAG system
+            rag_healthy = await rag_system.health_check()
+            
+            # Check if RAG system is initialized
+            if not rag_system.is_initialized:
+                await rag_system.initialize()
+            
+            rag_initialized = rag_system.is_initialized
+            
+            # Test RAG agent
+            agent = RAGAgent()
+            test_message = SupportMessage(
+                message_id="health_check",
+                channel_id="test",
+                user_id="test",
+                timestamp=datetime.now(),
+                content="What is Delve?"
+            )
+            
+            try:
+                response = await agent.process_message(test_message)
+                agent_healthy = response is not None
+            except:
+                agent_healthy = False
+            
+            overall_healthy = rag_healthy and rag_initialized and agent_healthy
             
             return {
-                "ollama": ollama_healthy,
-                "vector_store": vector_healthy,
-                "workflow": workflow_healthy,
-                "overall": all([ollama_healthy, vector_healthy, workflow_healthy])
+                "rag_system": rag_healthy,
+                "rag_initialized": rag_initialized,
+                "agent": agent_healthy,
+                "overall": overall_healthy
             }
         except Exception as e:
             return {
-                "ollama": False,
-                "vector_store": False,
-                "workflow": False,
+                "rag_system": False,
+                "rag_initialized": False,
+                "agent": False,
                 "overall": False,
                 "error": str(e)
             }
@@ -209,9 +242,9 @@ def show_system_health():
     
     # Get health status from session state or use defaults
     health_status = getattr(st.session_state, 'health_status', {
-        "ollama": False,
-        "vector_store": False,
-        "workflow": False,
+        "rag_system": False,
+        "rag_initialized": False,
+        "agent": False,
         "overall": False
     })
     
@@ -223,16 +256,16 @@ def show_system_health():
         st.metric("Overall Status", status)
     
     with col2:
-        status = "🟢 OK" if health_status.get("ollama", False) else "🔴 Error"
-        st.metric("Ollama (LLM)", status)
+        status = "🟢 OK" if health_status.get("rag_system", False) else "🔴 Error"
+        st.metric("RAG System", status)
     
     with col3:
-        status = "🟢 OK" if health_status.get("vector_store", False) else "🔴 Error"
-        st.metric("Vector Store", status)
+        status = "🟢 OK" if health_status.get("rag_initialized", False) else "🔴 Error"
+        st.metric("Vector Database", status)
     
     with col4:
-        status = "🟢 OK" if health_status.get("workflow", False) else "🔴 Error"
-        st.metric("Workflow", status)
+        status = "🟢 OK" if health_status.get("agent", False) else "🔴 Error"
+        st.metric("RAG Agent", status)
     
     if health_status.get("error"):
         st.error(f"Health check error: {health_status['error']}")
@@ -263,12 +296,12 @@ def show_configuration():
     
     st.subheader("Environment Setup")
     
-    st.write("Make sure you have these environment variables set:")
+    st.write("Optional environment variables:")
     
     env_vars = [
-        ("SLACK_BOT_TOKEN", "Your Slack bot token"),
-        ("SLACK_SIGNING_SECRET", "Your Slack signing secret"),
-        ("PINECONE_API_KEY", "Your Pinecone API key"),
+        ("SLACK_BOT_TOKEN", "Your Slack bot token (optional for testing)"),
+        ("SLACK_SIGNING_SECRET", "Your Slack signing secret (optional for testing)"),
+        ("OPENAI_API_KEY", "OpenAI API key (optional, uses Ollama by default)"),
         ("OLLAMA_BASE_URL", "Ollama server URL (default: http://localhost:11434)")
     ]
     
@@ -280,10 +313,13 @@ def show_configuration():
     st.write("1. **Start Ollama:**")
     st.code("ollama serve\nollama pull llama3.2:3b")
     
-    st.write("2. **Create .env file:**")
-    st.code("cp .env.example .env\n# Edit .env with your API keys")
+    st.write("2. **Test the system:**")
+    st.code("python run_manual_test.py")
     
-    st.write("3. **Run the application:**")
+    st.write("3. **Run this dashboard:**")
+    st.code("streamlit run src/simple_dashboard.py")
+    
+    st.write("4. **Run the main application:**")
     st.code("python3 -m src.main")
 
 
