@@ -66,6 +66,7 @@ class AgentResponse(BaseModel):
     agent_name: str
     response_text: str
     confidence_score: float
+    processing_time: float = 0.0
     sources: List[str] = Field(default_factory=list)
     should_escalate: bool = False
     escalation_reason: Optional[str] = None

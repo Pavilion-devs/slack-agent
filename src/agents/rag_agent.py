@@ -9,20 +9,21 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 
 from src.models.schemas import SupportMessage, AgentResponse
+from src.agents.base_agent import BaseAgent
 from src.core.rag_system import rag_system
 
 
 logger = logging.getLogger(__name__)
 
 
-class RAGAgent:
+class RAGAgent(BaseAgent):
     """
     Intelligent RAG agent that handles knowledge retrieval and response generation.
     Uses the advanced FAISS-based RAG system with confidence scoring.
     """
     
     def __init__(self):
-        self.agent_name = "rag_agent"
+        super().__init__(name="rag_agent")
         self.framework_patterns = {
             'SOC2': r'\b(?:soc\s*2|soc2|service organization control)\b',
             'HIPAA': r'\b(?:hipaa|protected health information|phi)\b',
@@ -90,7 +91,7 @@ class RAGAgent:
             processing_time = (datetime.now() - start_time).total_seconds()
             
             response = AgentResponse(
-                agent_name=self.agent_name,
+                agent_name=self.name,
                 response_text=formatted_response,
                 confidence_score=rag_result['confidence'],
                 processing_time=processing_time,
@@ -118,7 +119,7 @@ class RAGAgent:
             
             # Return error response with escalation
             return AgentResponse(
-                agent_name=self.agent_name,
+                agent_name=self.name,
                 response_text="I'm experiencing technical difficulties. Let me get a human agent to help you right away.",
                 confidence_score=0.0,
                 processing_time=0.0,
@@ -151,7 +152,7 @@ class RAGAgent:
     
     def _format_response(self, 
                         answer: str, 
-                        sources: List[Dict[str, Any]], 
+                        sources: List[str], 
                         frameworks: List[str],
                         intent: Optional[str]) -> str:
         """Format the response with appropriate context and sources."""
@@ -172,18 +173,9 @@ class RAGAgent:
         if sources and len(sources) > 0:
             formatted_response += "\n\n📚 **Relevant Information Sources:**"
             
-            # Group sources by section
-            sections = {}
+            # Add each source as a bullet point
             for source in sources[:3]:  # Limit to top 3 sources
-                section = source['section']
-                if section not in sections:
-                    sections[section] = []
-                sections[section].append(source)
-            
-            for section, section_sources in sections.items():
-                formatted_response += f"\n• {section}"
-                if len(section_sources) > 1:
-                    formatted_response += f" ({len(section_sources)} related topics)"
+                formatted_response += f"\n• {source}"
         
         # Add call-to-action for specific intents
         if intent == 'pricing' and 'pricing' not in answer.lower():

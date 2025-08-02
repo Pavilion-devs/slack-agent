@@ -21,16 +21,26 @@ class SlackClient:
     """Async Slack client for handling messages and responses."""
     
     def __init__(self):
-        self.client = AsyncWebClient(token=settings.slack_bot_token)
-        self.app = AsyncApp(
-            token=settings.slack_bot_token,
-            signing_secret=settings.slack_signing_secret
-        )
-        self._setup_event_handlers()
+        # Check if Slack credentials are available
+        self.enabled = bool(settings.slack_bot_token and settings.slack_signing_secret)
+        
+        if self.enabled:
+            self.client = AsyncWebClient(token=settings.slack_bot_token)
+            self.app = AsyncApp(
+                token=settings.slack_bot_token,
+                signing_secret=settings.slack_signing_secret
+            )
+            self._setup_event_handlers()
+        else:
+            logger.warning("Slack credentials not provided. Slack integration disabled.")
+            self.client = None
+            self.app = None
     
     def _setup_event_handlers(self):
         """Set up Slack event handlers."""
-        
+        if not self.enabled:
+            return
+            
         @self.app.event("message")
         async def handle_message_events(body, logger, say):
             """Handle incoming message events."""
@@ -63,6 +73,10 @@ class SlackClient:
     
     async def send_acknowledgment(self, message: SupportMessage) -> None:
         """Send immediate acknowledgment to user."""
+        if not self.enabled:
+            logger.info(f"[TEST MODE] Would send acknowledgment for message {message.message_id}")
+            return
+            
         acknowledgment_templates = [
             "👋 Got it! Looking into this now - should have an answer in 2-3 minutes.",
             "🔍 Thanks for reaching out! Searching our knowledge base for the best solution.",
@@ -92,6 +106,10 @@ class SlackClient:
         sources: Optional[List[str]] = None
     ) -> None:
         """Send AI-generated response to user."""
+        if not self.enabled:
+            logger.info(f"[TEST MODE] Would send response for message {message.message_id}: {response_text[:100]}...")
+            return
+            
         try:
             # Format response with sources if provided
             formatted_response = response_text
@@ -116,6 +134,10 @@ class SlackClient:
         suggested_assignee: Optional[str] = None
     ) -> None:
         """Send escalation notification to support team."""
+        if not self.enabled:
+            logger.info(f"[TEST MODE] Would escalate message {message.message_id}: {escalation_reason}")
+            return
+            
         try:
             escalation_text = (
                 f"🚨 *Escalation Required*\n\n"
