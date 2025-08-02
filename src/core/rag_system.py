@@ -66,6 +66,16 @@ class DelveRAGSystem:
             logger.error(f"Failed to initialize embeddings: {e}")
             raise
     
+    async def initialize(self) -> bool:
+        """
+        Initialize the RAG system with default knowledge base.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        knowledge_file_path = "knowledge_restructured.txt"
+        return await self.initialize_knowledge_base(knowledge_file_path)
+    
     async def initialize_knowledge_base(self, knowledge_file_path: str) -> bool:
         """
         Initialize the knowledge base from the Delve knowledge file.
