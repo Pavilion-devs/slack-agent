@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from slack_sdk.web.async_client import AsyncWebClient
@@ -73,7 +73,7 @@ class SlackClient:
     
     async def send_acknowledgment(self, message: SupportMessage) -> None:
         """Send immediate acknowledgment to user."""
-        if not self.enabled:
+        if not self.enabled or message.channel_id in ["DASHBOARD_TEST", "TERMINAL_CHAT"]:
             logger.info(f"[TEST MODE] Would send acknowledgment for message {message.message_id}")
             return
             
@@ -106,7 +106,7 @@ class SlackClient:
         sources: Optional[List[str]] = None
     ) -> None:
         """Send AI-generated response to user."""
-        if not self.enabled:
+        if not self.enabled or message.channel_id in ["DASHBOARD_TEST", "TERMINAL_CHAT"]:
             logger.info(f"[TEST MODE] Would send response for message {message.message_id}: {response_text[:100]}...")
             return
             
@@ -131,38 +131,346 @@ class SlackClient:
         self, 
         message: SupportMessage, 
         escalation_reason: str,
-        suggested_assignee: Optional[str] = None
+        suggested_assignee: Optional[str] = None,
+        escalation_context: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Send escalation notification to support team."""
+        """Send rich escalation notification with smart routing."""
         if not self.enabled:
             logger.info(f"[TEST MODE] Would escalate message {message.message_id}: {escalation_reason}")
             return
             
         try:
-            escalation_text = (
-                f"🚨 *Escalation Required*\n\n"
-                f"*Original Message:* {message.content[:200]}...\n"
-                f"*User:* <@{message.user_id}>\n"
-                f"*Channel:* <#{message.channel_id}>\n"
-                f"*Reason:* {escalation_reason}\n"
-                f"*Message Link:* https://slack.com/archives/{message.channel_id}/p{message.message_id.replace('.', '')}"
+            # Determine the appropriate channel based on escalation context
+            target_channel = self._determine_escalation_channel(escalation_reason, escalation_context)
+            
+            # Create rich Slack message with blocks
+            escalation_blocks = self._create_escalation_blocks(
+                message, escalation_reason, suggested_assignee, escalation_context
             )
             
-            if suggested_assignee:
-                escalation_text += f"\n*Suggested Assignee:* <@{suggested_assignee}>"
-            
-            # Send to internal support channel (you'll need to configure this)
-            support_channel = "#support-escalations"  # Configure in settings
-            
+            # Send escalation notification
             await self.client.chat_postMessage(
-                channel=support_channel,
-                text=escalation_text
+                channel=target_channel,
+                text=f"🚨 Escalation: {escalation_reason[:50]}...",  # Fallback text
+                blocks=escalation_blocks
             )
             
-            logger.info(f"Sent escalation notification for message {message.message_id}")
+            logger.info(f"Sent escalation notification for message {message.message_id} to {target_channel}")
             
         except SlackApiError as e:
             logger.error(f"Error sending escalation: {e}")
+    
+    def _determine_escalation_channel(self, escalation_reason: str, context: Optional[Dict[str, Any]] = None) -> str:
+        """Determine the appropriate Slack channel for escalation."""
+        reason_lower = escalation_reason.lower()
+        
+        # Sales-related escalations
+        if any(keyword in reason_lower for keyword in ['demo', 'pricing', 'sales', 'enterprise', 'contract']):
+            return "#sales-escalations"
+        
+        # Technical support escalations
+        if any(keyword in reason_lower for keyword in ['api', 'integration', 'technical', 'saml', 'sso', 'authentication']):
+            return "#tech-support"
+        
+        # Compliance-related escalations
+        if any(keyword in reason_lower for keyword in ['compliance', 'audit', 'soc2', 'gdpr', 'hipaa', 'iso27001']):
+            return "#compliance-team"
+        
+        # Check context for more specific routing
+        if context:
+            meeting_type = context.get('meeting_type', '')
+            if meeting_type == 'technical_support':
+                return "#tech-support"
+            elif meeting_type in ['compliance_consultation', 'audit']:
+                return "#compliance-team"
+            elif meeting_type in ['sales_discussion', 'demo']:
+                return "#sales-escalations"
+        
+        # Default to general support escalations
+        return "#support-escalations"
+    
+    def _create_escalation_blocks(
+        self, 
+        message: SupportMessage, 
+        escalation_reason: str,
+        suggested_assignee: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """Create rich Slack blocks for escalation notification."""
+        blocks = []
+        
+        # Header block
+        blocks.append({
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "🚨 Customer Escalation Required"
+            }
+        })
+        
+        # Main information section
+        fields = [
+            {
+                "type": "mrkdwn",
+                "text": f"*Customer Message:*\n{message.content[:300]}{'...' if len(message.content) > 300 else ''}"
+            },
+            {
+                "type": "mrkdwn", 
+                "text": f"*Escalation Reason:*\n{escalation_reason}"
+            }
+        ]
+        
+        # Add context-specific fields
+        if context:
+            if context.get('meeting_type'):
+                fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Meeting Type:*\n{context['meeting_type'].replace('_', ' ').title()}"
+                })
+            
+            if context.get('urgency') == 'high':
+                fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Priority:*\n🔴 HIGH PRIORITY"
+                })
+            
+            if context.get('timezone'):
+                fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Customer Timezone:*\n{context['timezone']}"
+                })
+        
+        blocks.append({
+            "type": "section",
+            "fields": fields
+        })
+        
+        # Customer information section
+        customer_info = []
+        if hasattr(message, 'user_name') and message.user_name:
+            customer_info.append(f"*Name:* {message.user_name}")
+        if hasattr(message, 'user_email') and message.user_email:
+            customer_info.append(f"*Email:* {message.user_email}")
+        
+        if customer_info:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Customer Information:*\n{' • '.join(customer_info)}"
+                }
+            })
+        
+        # Suggested assignee section
+        if suggested_assignee:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Suggested Assignee:* <@{suggested_assignee}>"
+                }
+            })
+        
+        # Action buttons
+        blocks.append({
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Take Ownership"
+                    },
+                    "style": "primary",
+                    "action_id": "take_ownership",
+                    "value": message.message_id
+                },
+                {
+                    "type": "button", 
+                    "text": {
+                        "type": "plain_text",
+                        "text": "View Full Context"
+                    },
+                    "action_id": "view_context",
+                    "value": message.message_id
+                },
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "Schedule Meeting"
+                    },
+                    "action_id": "schedule_meeting",
+                    "value": message.message_id
+                }
+            ]
+        })
+        
+        # Metadata section
+        timestamp = message.timestamp.strftime("%Y-%m-%d %H:%M:%S EST")
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"📅 Escalated at {timestamp} | 🆔 Message ID: {message.message_id}"
+                }
+            ]
+        })
+        
+        return blocks
+    
+    async def send_meeting_notification(
+        self, 
+        meeting_details: Dict[str, Any],
+        notification_type: str = "booked"  # "booked", "cancelled", "rescheduled"
+    ) -> None:
+        """Send meeting booking notification to appropriate Slack channel."""
+        if not self.enabled:
+            logger.info(f"[TEST MODE] Would send meeting notification: {notification_type}")
+            return
+            
+        try:
+            # Determine notification channel based on meeting type
+            meeting_type = meeting_details.get('meeting_type', 'demo')
+            channel = self._get_meeting_notification_channel(meeting_type)
+            
+            # Create notification blocks
+            blocks = self._create_meeting_notification_blocks(meeting_details, notification_type)
+            
+            # Send notification
+            await self.client.chat_postMessage(
+                channel=channel,
+                text=f"📅 Meeting {notification_type}: {meeting_details.get('title', 'Untitled')}",
+                blocks=blocks
+            )
+            
+            logger.info(f"Sent meeting {notification_type} notification to {channel}")
+            
+        except SlackApiError as e:
+            logger.error(f"Error sending meeting notification: {e}")
+    
+    def _get_meeting_notification_channel(self, meeting_type: str) -> str:
+        """Get the appropriate channel for meeting notifications."""
+        channel_mapping = {
+            'demo': '#sales-activity',
+            'sales_discussion': '#sales-activity', 
+            'technical_support': '#tech-support',
+            'compliance_consultation': '#compliance-team',
+            'onboarding_session': '#customer-success'
+        }
+        return channel_mapping.get(meeting_type, '#general-activity')
+    
+    def _create_meeting_notification_blocks(
+        self, 
+        meeting_details: Dict[str, Any], 
+        notification_type: str
+    ) -> List[Dict[str, Any]]:
+        """Create rich blocks for meeting notifications."""
+        blocks = []
+        
+        # Header with appropriate emoji
+        emoji_map = {
+            "booked": "📅",
+            "cancelled": "❌", 
+            "rescheduled": "🔄"
+        }
+        emoji = emoji_map.get(notification_type, "📅")
+        
+        blocks.append({
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f"{emoji} Meeting {notification_type.title()}"
+            }
+        })
+        
+        # Meeting details
+        fields = []
+        
+        if meeting_details.get('title'):
+            fields.append({
+                "type": "mrkdwn",
+                "text": f"*Meeting:*\n{meeting_details['title']}"
+            })
+        
+        if meeting_details.get('start_time'):
+            fields.append({
+                "type": "mrkdwn",
+                "text": f"*When:*\n{meeting_details['start_time']}"
+            })
+        
+        if meeting_details.get('duration_minutes'):
+            fields.append({
+                "type": "mrkdwn", 
+                "text": f"*Duration:*\n{meeting_details['duration_minutes']} minutes"
+            })
+        
+        if meeting_details.get('meeting_type'):
+            meeting_type_display = meeting_details['meeting_type'].replace('_', ' ').title()
+            fields.append({
+                "type": "mrkdwn",
+                "text": f"*Type:*\n{meeting_type_display}"
+            })
+        
+        blocks.append({
+            "type": "section",
+            "fields": fields
+        })
+        
+        # Customer information
+        customer_info = []
+        if meeting_details.get('customer_name'):
+            customer_info.append(f"*Name:* {meeting_details['customer_name']}")
+        if meeting_details.get('customer_email'):
+            customer_info.append(f"*Email:* {meeting_details['customer_email']}")
+        
+        if customer_info:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Customer:*\n{' • '.join(customer_info)}"
+                }
+            })
+        
+        # Calendar link if available
+        if meeting_details.get('calendar_link'):
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Calendar Event:* <{meeting_details['calendar_link']}|View in Calendar>"
+                }
+            })
+        
+        # Action buttons for booked meetings
+        if notification_type == "booked":
+            blocks.append({
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Prep Notes"
+                        },
+                        "action_id": "prep_notes",
+                        "value": meeting_details.get('event_id', '')
+                    },
+                    {
+                        "type": "button",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "Customer Context"
+                        },
+                        "action_id": "customer_context",
+                        "value": meeting_details.get('customer_email', '')
+                    }
+                ]
+            })
+        
+        return blocks
     
     async def update_message_with_typing(self, channel_id: str) -> None:
         """Show typing indicator while processing."""

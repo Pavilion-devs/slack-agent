@@ -148,14 +148,16 @@ async def test_agent_workflow(message: str, category: str = "Auto-detect", urgen
         if not rag_system.is_initialized:
             await rag_system.initialize()
         
-        # Create test support message
+        # Create test support message with dashboard flag to disable Slack messaging
         test_message = SupportMessage(
-            message_id=f"test_{datetime.now().timestamp()}",
-            channel_id="test_channel",
-            user_id="test_user",
+            message_id=f"streamlit_test_{datetime.now().timestamp()}",
+            channel_id="DASHBOARD_TEST",  # Special channel ID for dashboard testing
+            user_id="dashboard_test_user",
             timestamp=datetime.now(),
             content=message,
-            thread_ts=None
+            thread_ts=None,
+            user_name="Dashboard Test User",
+            user_email="test@dashboard.local"
         )
         
         # Override category and urgency if specified
@@ -167,18 +169,23 @@ async def test_agent_workflow(message: str, category: str = "Auto-detect", urgen
         # Process through improved workflow
         workflow = ImprovedWorkflow()
         start_time = datetime.now()
-        response = await workflow.process_message(test_message)
+        state = await workflow.process_message(test_message)
         processing_time = (datetime.now() - start_time).total_seconds()
         
+        # Extract best response from state
+        best_response = None
+        if state.agent_responses:
+            best_response = max(state.agent_responses, key=lambda r: r.confidence_score)
+        
         return {
-            "final_response": response.response_text,
-            "escalated": response.should_escalate,
-            "agents_used": [response.agent_name],
-            "confidence_scores": [response.confidence_score],
+            "final_response": state.final_response or "No response generated",
+            "escalated": state.escalated,
+            "agents_used": [r.agent_name for r in state.agent_responses],
+            "confidence_scores": [r.confidence_score for r in state.agent_responses],
             "processing_time": processing_time,
-            "sources": response.sources if response.sources else [],
-            "escalation_reason": response.escalation_reason,
-            "metadata": response.metadata if hasattr(response, 'metadata') else {}
+            "sources": best_response.sources if best_response and best_response.sources else [],
+            "escalation_reason": best_response.escalation_reason if best_response else None,
+            "metadata": best_response.metadata if best_response and hasattr(best_response, 'metadata') else {}
         }
         
     except Exception as e:

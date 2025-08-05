@@ -42,6 +42,18 @@ class RAGAgent(BaseAgent):
             'support': r'\b(?:help|support|assistance|contact)\b'
         }
     
+    def should_handle(self, message: SupportMessage) -> bool:
+        """
+        RAG agent can handle all types of messages as the primary intelligent agent.
+        
+        Args:
+            message: The support message to evaluate
+            
+        Returns:
+            bool: Always True since RAG agent is the primary handler
+        """
+        return True
+    
     async def process_message(self, message: SupportMessage) -> AgentResponse:
         """
         Process support message using the RAG system.

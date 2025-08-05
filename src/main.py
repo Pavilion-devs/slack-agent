@@ -11,9 +11,9 @@ from fastapi.responses import JSONResponse
 import uvicorn
 
 from src.core.config import settings
-from src.workflows.improved_workflow import improved_workflow
 from src.integrations.slack_client import slack_client
 from src.core.rag_system import rag_system
+# NOTE: Import workflow and multi-agent system lazily to avoid circular imports
 from src.models.schemas import SupportMessage
 
 
@@ -36,17 +36,13 @@ async def lifespan(app: FastAPI):
     
     # Health checks on startup
     try:
-        # Check RAG system
-        rag_healthy = await rag_system.health_check()
-        if not rag_healthy:
-            logger.warning("RAG system not yet initialized - will initialize on first request")
-        
-        # Check Workflow health
-        workflow_healthy = await improved_workflow.health_check()
+        # Initialize new LangGraph workflow system (replaces old multi-agent system)
+        from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
+        workflow_healthy = await delve_langgraph_workflow.health_check()
         if not workflow_healthy:
-            logger.warning("Workflow health check failed - will attempt initialization on first request")
+            logger.warning("LangGraph workflow health check failed - will attempt initialization on first request")
         
-        logger.info("Application startup completed")
+        logger.info("Application startup completed (using LangGraph workflow)")
         
     except Exception as e:
         logger.error(f"Error during startup: {e}")
@@ -76,16 +72,17 @@ async def root():
 async def health_check():
     """Comprehensive health check endpoint."""
     try:
-        # Check all components
-        rag_healthy = await rag_system.health_check()
-        workflow_healthy = await improved_workflow.health_check()
+        # Check new LangGraph workflow system
+        from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
+        
+        workflow_healthy = await delve_langgraph_workflow.health_check()
         
         health_status = {
-            "status": "healthy" if all([rag_healthy, workflow_healthy]) else "degraded",
+            "status": "healthy" if workflow_healthy else "degraded",
             "components": {
-                "rag_system": "healthy" if rag_healthy else "unhealthy",
-                "workflow": "healthy" if workflow_healthy else "unhealthy"
+                "langgraph_workflow": "healthy" if workflow_healthy else "unhealthy"
             },
+            "workflow_type": "langgraph",
             "timestamp": datetime.now().isoformat()
         }
         
@@ -140,8 +137,11 @@ async def process_support_message(message: SupportMessage):
     try:
         logger.info(f"Processing support message: {message.message_id}")
         
-        # Run through improved workflow
-        final_state = await improved_workflow.process_message(message)
+        # Use new LangGraph workflow system
+        from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
+        
+        # Run through LangGraph workflow
+        final_state = await delve_langgraph_workflow.process_message(message)
         
         # Log results
         logger.info(
@@ -179,8 +179,11 @@ async def test_message(request: Request):
             thread_ts=None
         )
         
-        # Process through improved workflow
-        final_state = await improved_workflow.process_message(test_message)
+        # Use new LangGraph workflow system
+        from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
+        
+        # Process through LangGraph workflow
+        final_state = await delve_langgraph_workflow.process_message(test_message)
         
         # Return results
         return {
@@ -203,12 +206,17 @@ async def test_message(request: Request):
 async def get_stats():
     """Get system statistics."""
     try:
-        rag_stats = rag_system.get_stats()
-        workflow_stats = improved_workflow.get_stats()
+        # Get stats from new LangGraph workflow system
+        from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
+        from src.workflows.langgraph_workflow import langgraph_workflow
+        
+        workflow_stats = delve_langgraph_workflow.get_stats()
+        langgraph_health = await langgraph_workflow.health_check()
         
         return {
-            "rag_system": rag_stats,
             "workflow": workflow_stats,
+            "langgraph_health": langgraph_health,
+            "system_type": "langgraph_based",
             "timestamp": datetime.now().isoformat()
         }
         

@@ -1,6 +1,6 @@
 """
-Improved workflow using the new RAG-based architecture.
-Simplified from complex multi-agent system to intelligent single-agent processing.
+Enhanced workflow using the new multi-agent architecture.
+Upgraded from single-agent to intelligent multi-agent system with specialized routing.
 """
 
 import logging
@@ -8,9 +8,8 @@ from typing import Dict, Any
 from datetime import datetime
 
 from src.models.schemas import AgentState, SupportMessage
-from src.agents.rag_agent import rag_agent
 from src.integrations.slack_client import slack_client
-from src.core.rag_system import rag_system
+# NOTE: Import multi_agent_system lazily to avoid circular imports
 
 
 logger = logging.getLogger(__name__)
@@ -18,18 +17,18 @@ logger = logging.getLogger(__name__)
 
 class ImprovedWorkflow:
     """
-    Streamlined workflow using the new RAG-based architecture.
-    Provides faster, more accurate responses with intelligent escalation.
+    Enhanced workflow using the new multi-agent architecture.
+    Provides intelligent routing, specialized responses, and proper escalation.
     """
     
     def __init__(self):
-        self.workflow_name = "improved_rag_workflow"
-        self.knowledge_initialized = False
-        logger.info("Improved RAG workflow initialized")
+        self.workflow_name = "enhanced_multi_agent_workflow"
+        self.system_initialized = False
+        logger.info("Enhanced multi-agent workflow initialized")
     
     async def process_message(self, message: SupportMessage) -> AgentState:
         """
-        Process support message through the improved workflow.
+        Process support message through the enhanced multi-agent workflow.
         
         Args:
             message: The support message to process
@@ -38,13 +37,13 @@ class ImprovedWorkflow:
             AgentState with processing results
         """
         try:
-            # Initialize knowledge base if needed
-            if not self.knowledge_initialized:
-                await self._initialize_knowledge_base()
+            # Initialize multi-agent system if needed
+            if not self.system_initialized:
+                await self._initialize_system()
             
             # Create initial state
             state = AgentState(message=message)
-            logger.info(f"Starting improved workflow for message {message.message_id}")
+            logger.info(f"Starting enhanced multi-agent workflow for message {message.message_id}")
             
             # Step 1: Send immediate acknowledgment
             try:
@@ -53,38 +52,36 @@ class ImprovedWorkflow:
             except Exception as e:
                 logger.warning(f"Could not send acknowledgment: {e}")
             
-            # Step 2: Process through RAG agent
-            rag_response = await rag_agent.process_message(message)
-            state.agent_responses.append(rag_response)
+            # Step 2: Process through multi-agent system
+            # Lazy import to avoid circular imports
+            from src.agents.multi_agent_system import multi_agent_system
+            agent_response = await multi_agent_system.process_message(message)
+            state.agent_responses.append(agent_response)
             
-            # Step 3: Determine final action based on RAG response
-            if rag_response.should_escalate:
-                # Escalate to human
-                state.escalated = True
-                state.final_response = self._create_escalation_message(rag_response)
-                
-                try:
-                    await slack_client.send_escalation_notification(
-                        message,
-                        rag_response.escalation_reason or "RAG agent escalation"
-                    )
-                    logger.info(f"Escalation notification sent for message {message.message_id}")
-                except Exception as e:
-                    logger.warning(f"Could not send escalation notification: {e}")
+            # Step 3: Handle response - escalation is already handled by multi-agent system
+            state.final_response = agent_response.response_text
+            state.escalated = agent_response.should_escalate
             
-            else:
-                # Send RAG response directly
-                state.final_response = rag_response.response_text
-                
-                try:
+            # Step 4: Send response to Slack
+            try:
+                if agent_response.should_escalate:
+                    # Response already includes escalation message
                     await slack_client.send_response(
                         message,
-                        rag_response.response_text,
-                        rag_response.sources
+                        agent_response.response_text,
+                        agent_response.sources
                     )
-                    logger.info(f"RAG response sent for message {message.message_id}")
-                except Exception as e:
-                    logger.warning(f"Could not send response: {e}")
+                    logger.info(f"Escalation response sent for message {message.message_id}")
+                else:
+                    # Send normal response
+                    await slack_client.send_response(
+                        message,
+                        agent_response.response_text,
+                        agent_response.sources
+                    )
+                    logger.info(f"Agent response sent for message {message.message_id}")
+            except Exception as e:
+                logger.warning(f"Could not send response: {e}")
             
             # Mark processing as completed
             state.processing_completed = datetime.now()
@@ -96,9 +93,9 @@ class ImprovedWorkflow:
             
             logger.info(
                 f"Message {message.message_id} processed in {processing_time:.2f}s. "
-                f"Confidence: {rag_response.confidence_score:.2f}, "
-                f"Escalated: {state.escalated}, "
-                f"RAG processing time: {rag_response.processing_time:.2f}s"
+                f"Agent: {agent_response.agent_name}, "
+                f"Confidence: {agent_response.confidence_score:.2f}, "
+                f"Escalated: {state.escalated}"
             )
             
             return state
@@ -130,26 +127,26 @@ class ImprovedWorkflow:
             
             return error_state
     
-    async def _initialize_knowledge_base(self):
-        """Initialize the knowledge base if not already done."""
+    async def _initialize_system(self):
+        """Initialize the multi-agent system if not already done."""
         try:
-            logger.info("Initializing knowledge base...")
+            logger.info("Initializing multi-agent system...")
             
-            # Path to knowledge file
-            knowledge_file_path = "knowledge_restructured.txt"
+            # Lazy import to avoid circular imports
+            from src.agents.multi_agent_system import multi_agent_system
             
-            success = await rag_system.initialize_knowledge_base(knowledge_file_path)
+            success = await multi_agent_system.initialize()
             
             if success:
-                self.knowledge_initialized = True
-                logger.info("Knowledge base initialized successfully")
+                self.system_initialized = True
+                logger.info("Multi-agent system initialized successfully")
             else:
-                logger.error("Failed to initialize knowledge base")
-                # Continue without knowledge base - will escalate all queries
+                logger.error("Failed to initialize multi-agent system")
+                # Continue with degraded functionality
                 
         except Exception as e:
-            logger.error(f"Error initializing knowledge base: {e}")
-            # Continue without knowledge base
+            logger.error(f"Error initializing multi-agent system: {e}")
+            # Continue with degraded functionality
     
     def _create_escalation_message(self, rag_response) -> str:
         """Create an appropriate escalation message based on the RAG response."""
@@ -175,15 +172,17 @@ class ImprovedWorkflow:
     async def health_check(self) -> bool:
         """Check if the workflow is healthy."""
         try:
-            # Check RAG agent health
-            rag_healthy = await rag_agent.health_check()
-            
-            # Check knowledge base initialization
-            if not self.knowledge_initialized:
-                logger.warning("Knowledge base not initialized")
+            # Check system initialization first
+            if not self.system_initialized:
+                logger.warning("Multi-agent system not initialized")
                 return False
             
-            return rag_healthy
+            # Lazy import to avoid circular imports
+            from src.agents.multi_agent_system import multi_agent_system
+            
+            # Check multi-agent system health
+            multi_agent_health = await multi_agent_system.health_check()
+            return multi_agent_health["system_healthy"]
             
         except Exception as e:
             logger.error(f"Workflow health check failed: {e}")
@@ -191,10 +190,16 @@ class ImprovedWorkflow:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get workflow statistics."""
+        multi_agent_stats = {}
+        if self.system_initialized:
+            # Lazy import to avoid circular imports
+            from src.agents.multi_agent_system import multi_agent_system
+            multi_agent_stats = multi_agent_system.get_performance_stats()
+        
         return {
             'workflow_name': self.workflow_name,
-            'knowledge_initialized': self.knowledge_initialized,
-            'rag_agent_stats': rag_agent.get_stats()
+            'system_initialized': self.system_initialized,
+            'multi_agent_stats': multi_agent_stats
         }
 
 
