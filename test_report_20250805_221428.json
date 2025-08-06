@@ -1,0 +1,417 @@
+{
+  "timestamp": "2025-08-05T22:14:28.879018",
+  "overall_metrics": {
+    "total_tests": 34,
+    "successful_tests": 0,
+    "success_rate": 0.0,
+    "intent_accuracy": 0.0,
+    "agent_accuracy": 0.0,
+    "total_time": 334.1521248817444
+  },
+  "performance_metrics": {
+    "avg_processing_time": 9.327182082568898,
+    "min_processing_time": 1.9338350296020508,
+    "max_processing_time": 23.07380485534668,
+    "avg_confidence": 0
+  },
+  "error_analysis": {
+    "total_errors": 34,
+    "total_escalations": 34,
+    "escalation_rate": 100.0,
+    "error_messages": [
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'",
+      "'str' object has no attribute 'response_text'"
+    ]
+  },
+  "suite_breakdown": {
+    "customer_journey": {
+      "total": 4,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 11.950952589511871,
+      "avg_confidence": 0
+    },
+    "technical_user_flow": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 6.711477422714234,
+      "avg_confidence": 0
+    },
+    "compliance_professional": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 9.707317686080932,
+      "avg_confidence": 0
+    },
+    "pricing_and_sales": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 9.979514598846436,
+      "avg_confidence": 0
+    },
+    "edge_cases": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 10.2031005859375,
+      "avg_confidence": 0
+    },
+    "language_variations": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 7.492425012588501,
+      "avg_confidence": 0
+    },
+    "compliance_frameworks": {
+      "total": 5,
+      "successful": 0,
+      "success_rate": 0.0,
+      "avg_time": 9.770240783691406,
+      "avg_confidence": 0
+    }
+  },
+  "failed_tests": [
+    {
+      "test_name": "customer_journey_1",
+      "message": "What is Delve?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "customer_journey_2",
+      "message": "How does SOC2 compliance work?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "customer_journey_3",
+      "message": "What are your pricing options?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "customer_journey_4",
+      "message": "Can I schedule a demo?",
+      "expected_intent": "scheduling",
+      "actual_intent": "error",
+      "expected_agent": "demo_scheduler",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "technical_user_flow_1",
+      "message": "I'm getting a 401 error with your API",
+      "expected_intent": "technical_support",
+      "actual_intent": "error",
+      "expected_agent": "technical_support",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "technical_user_flow_2",
+      "message": "How do I integrate Delve with existing tools?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "technical_user_flow_3",
+      "message": "What's the difference between SOC2 Type 1 and Type 2?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "technical_user_flow_4",
+      "message": "Do you support SAML SSO?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "technical_user_flow_5",
+      "message": "Can you help me troubleshoot this integration?",
+      "expected_intent": "technical_support",
+      "actual_intent": "error",
+      "expected_agent": "technical_support",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_professional_1",
+      "message": "Tell me about HIPAA compliance automation",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_professional_2",
+      "message": "How long does ISO 27001 certification take?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_professional_3",
+      "message": "What evidence do you collect automatically?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_professional_4",
+      "message": "I need urgent help with an audit starting Monday",
+      "expected_intent": "technical_support",
+      "actual_intent": "error",
+      "expected_agent": "technical_support",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_professional_5",
+      "message": "Can we schedule a technical deep-dive?",
+      "expected_intent": "scheduling",
+      "actual_intent": "error",
+      "expected_agent": "demo_scheduler",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "pricing_and_sales_1",
+      "message": "How much does Delve cost?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "pricing_and_sales_2",
+      "message": "What's included in your enterprise plan?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "pricing_and_sales_3",
+      "message": "Do you offer volume discounts?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "pricing_and_sales_4",
+      "message": "Can I get a custom quote for 50 employees?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "pricing_and_sales_5",
+      "message": "What's your renewal pricing structure?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "edge_cases_1",
+      "message": "Hello",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "edge_cases_2",
+      "message": "Help",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "edge_cases_3",
+      "message": "I'm frustrated with your service",
+      "expected_intent": "technical_support",
+      "actual_intent": "error",
+      "expected_agent": "technical_support",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "edge_cases_4",
+      "message": "Can you do everything cheaper than competitors?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "edge_cases_5",
+      "message": "I need everything done by tomorrow",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "language_variations_1",
+      "message": "Schedule demo",
+      "expected_intent": "scheduling",
+      "actual_intent": "error",
+      "expected_agent": "demo_scheduler",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "language_variations_2",
+      "message": "Could you perhaps help me understand pricing?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "language_variations_3",
+      "message": "yo what's ur pricing lol",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "language_variations_4",
+      "message": "I would like to inquire about scheduling a demonstration",
+      "expected_intent": "scheduling",
+      "actual_intent": "error",
+      "expected_agent": "demo_scheduler",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "language_variations_5",
+      "message": "demo?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_frameworks_1",
+      "message": "How does Delve help with GDPR compliance?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_frameworks_2",
+      "message": "What's involved in SOC2 Type 2 audit?",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_frameworks_3",
+      "message": "Tell me about ISO 27001 implementation",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_frameworks_4",
+      "message": "HIPAA compliance requirements explanation",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    },
+    {
+      "test_name": "compliance_frameworks_5",
+      "message": "PCI DSS compliance automation",
+      "expected_intent": "information",
+      "actual_intent": "error",
+      "expected_agent": "enhanced_rag_agent",
+      "actual_agent": "error",
+      "error": "'str' object has no attribute 'response_text'"
+    }
+  ]
+}

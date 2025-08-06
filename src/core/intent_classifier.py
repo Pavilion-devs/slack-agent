@@ -56,15 +56,16 @@ class IntentClassifier:
         ]
         
         self.technical_patterns = [
-            # Error and problem language
-            (r'\b(?:error|bug|issue|problem|not working|broken|failed|failure)', 0.90),
+            # Error and problem language - specific technical terms only
+            (r'\b(?:error|bug|issue|problem|not working|broken|failed|failure).*\b(?:api|integration|code|implementation|system|login)', 0.90),
             (r'\b(?:api|integration|technical|code|implementation).*(?:error|issue|problem)', 0.95),
-            (r'\b(?:troubleshoot|debug|fix|resolve|help with)', 0.85),
+            (r'\b(?:troubleshoot|debug|fix|resolve).*(?:error|bug|api|integration)', 0.85),
             (r'\b(?:500|404|401|403|timeout|connection).*(?:error|issue)', 0.95),
             
-            # Technical implementation
-            (r'\bhow\s+(?:do|to)\s+(?:implement|integrate|configure|set up).*\b(?:api|sdk|integration)', 0.90),
+            # Technical implementation - specific implementation help
+            (r'\bhow\s+(?:do|to)\s+(?:implement|integrate|configure|set up).*\b(?:api|sdk|integration|webhook)', 0.90),
             (r'\b(?:webhook|api key|authentication|oauth).*(?:not working|issue|error)', 0.95),
+            (r'\bsso.*(?:not working|issue|error|setup|configuration)', 0.90),
             
             # System status
             (r'\bis.*(?:down|offline|not responding)', 0.90),
@@ -83,10 +84,20 @@ class IntentClassifier:
             (r'\b(?:documentation|docs|guide|tutorial|manual)', 0.85),
             (r'\bwhere\s+(?:can i find|is the)\s+(?:documentation|docs|guide)', 0.90),
             
-            # Compliance information (not scheduling)
-            (r'\bhow\s+does\s+(?:soc2|iso|gdpr|hipaa|compliance)\s+work', 0.85),
-            (r'\bwhat\s+(?:is|are)\s+(?:soc2|iso|gdpr|hipaa|compliance)', 0.85),
-            (r'\b(?:soc2|iso|gdpr|hipaa)\s+(?:process|requirements|certification)', 0.80),
+            # Compliance information - HIGH PRIORITY patterns that should override technical
+            (r'\bhow\s+does\s+(?:delve|your platform)\s+help\s+with\s+(?:soc2|iso|gdpr|hipaa|compliance)', 0.95),
+            (r'\bhow\s+does\s+(?:soc2|iso|gdpr|hipaa|compliance)\s+work', 0.90),
+            (r'\bwhat\s+(?:is|are)\s+(?:soc2|iso|gdpr|hipaa|compliance)', 0.90),
+            (r'\b(?:soc2|iso|gdpr|hipaa)\s+(?:process|requirements|certification)', 0.85),
+            (r'\btell\s+me\s+about\s+(?:soc2|iso|gdpr|hipaa|compliance)', 0.90),
+            (r'\bexplain\s+(?:soc2|iso|gdpr|hipaa|compliance)', 0.90),
+            
+            # Pricing information - should go to RAG, not technical support
+            (r'\bwhat\s+(?:are|is)\s+(?:your|the)\s+(?:pricing|price|cost|rates?)', 0.95),
+            (r'\bhow\s+much\s+(?:does|do)\s+(?:it|you|delve|this)\s+cost', 0.95),
+            (r'\bpricing\s+(?:plans?|options?|tiers?|models?)', 0.95),
+            (r'\b(?:subscription|license|licensing)\s+(?:cost|price|fee)', 0.90),
+            (r'\b(?:enterprise|business)\s+pricing', 0.90),
             
             # Feature information
             (r'\bwhat\s+features\s+(?:do you have|does delve offer)', 0.85),
@@ -112,6 +123,7 @@ class IntentClassifier:
         
         # Apply disambiguation rules to prevent false positives
         scheduling_confidence = self._apply_scheduling_disambiguation(content_lower, scheduling_confidence)
+        technical_confidence = self._apply_technical_disambiguation(content_lower, technical_confidence)
         
         # Determine best intent
         max_confidence = max(scheduling_confidence, technical_confidence, information_confidence)
@@ -205,6 +217,32 @@ class IntentClassifier:
                 scheduling_confidence = max(0.0, scheduling_confidence - 0.25)
         
         return scheduling_confidence
+    
+    def _apply_technical_disambiguation(self, content: str, technical_confidence: float) -> float:
+        """
+        Apply disambiguation rules to prevent technical support false positives.
+        
+        Key insight: Information-seeking questions about compliance/features should 
+        not trigger technical support, even if they contain words like "help".
+        """
+        
+        # Reduce confidence for compliance/pricing information queries
+        info_seeking_patterns = [
+            r'\bhow\s+does\s+(?:delve|your platform)\s+help\s+with\s+(?:soc2|iso|gdpr|hipaa|compliance)',
+            r'\bwhat\s+(?:are|is)\s+(?:your|the)\s+(?:pricing|price|cost)',
+            r'\btell\s+me\s+about\s+(?:soc2|iso|gdpr|hipaa|compliance|pricing)',
+            r'\bexplain\s+(?:soc2|iso|gdpr|hipaa|compliance|pricing)',
+            r'\bhow\s+much\s+(?:does|do)\s+(?:it|you|delve|this)\s+cost',
+            r'\bwhat\s+features\s+(?:do you have|does delve offer)',
+            r'\bcan\s+(?:delve|your platform)\s+(?:help with|handle|support)\s+(?:soc2|iso|gdpr|hipaa|compliance)',
+        ]
+        
+        for pattern in info_seeking_patterns:
+            if re.search(pattern, content):
+                logger.info(f"Technical disambiguation: Reducing confidence for info-seeking pattern: {pattern}")
+                technical_confidence = max(0.0, technical_confidence - 0.40)
+        
+        return technical_confidence
     
     def _extract_metadata(self, content: str, intent: str) -> Dict[str, Any]:
         """Extract metadata relevant to the classified intent."""

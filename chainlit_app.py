@@ -101,7 +101,8 @@ Click any button below to test specific scenarios, or type your own message!
                     name=f"test_{case}",
                     value=case,
                     label=case,
-                    description=f"Test case from {category}"
+                    description=f"Test case from {category}",
+                    payload={"test_case": case, "category": category}
                 )
             )
     
@@ -319,7 +320,7 @@ async def show_session_summary():
     """Show session performance summary."""
     stats = cl.user_session.get("session_stats", {})
     
-    if stats["total_messages"] == 0:
+    if not stats or stats.get("total_messages", 0) == 0:
         return
     
     avg_processing_time = sum(stats["processing_times"]) / len(stats["processing_times"])

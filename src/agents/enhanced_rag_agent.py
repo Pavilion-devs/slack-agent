@@ -141,16 +141,26 @@ class EnhancedRAGAgent(BaseAgent):
             logger.info(f"Message analysis - Urgency: {urgency}, Intent: {intent}")
             logger.info(f"Confidence threshold: {self.confidence_threshold}, Actual confidence: {confidence}")
             
+            # Initialize escalation variables
+            should_escalate = should_escalate_rag  # Default to RAG system's recommendation
+            escalation_reason = ""  # Initialize empty escalation reason
+            
             # Always escalate critical issues
             if urgency == 'critical':
                 should_escalate = True
                 escalation_reason = "Critical issue requiring immediate human attention"
                 logger.info(f"Escalating due to critical urgency")
-            # Always escalate sales inquiries to sales team
+            # For sales inquiries, check if RAG has good information first
             elif intent.get('is_sales_inquiry'):
-                should_escalate = True
-                escalation_reason = "Sales inquiry requiring human attention"
-                logger.info(f"Escalating due to sales inquiry")
+                if confidence < 0.70:  # Only escalate sales inquiries if RAG confidence is low
+                    should_escalate = True
+                    escalation_reason = "Sales inquiry with low RAG confidence - requires human attention"
+                    logger.info(f"Escalating sales inquiry due to low RAG confidence ({confidence:.2f})")
+                else:
+                    # RAG has good information about pricing/sales questions - provide it first
+                    should_escalate = False
+                    escalation_reason = ""
+                    logger.info(f"Sales inquiry but RAG has high confidence ({confidence:.2f}) - providing answer")
             # Escalate demo requests even if RAG has info
             elif intent.get('is_demo_request'):
                 should_escalate = True
@@ -198,17 +208,16 @@ class EnhancedRAGAgent(BaseAgent):
         """Enhance the RAG response based on message context."""
         intent = self.extract_message_intent(message)
         
-        # If this is actually a sales inquiry, redirect appropriately
-        if intent.get('is_sales_inquiry'):
-            return (
-                "I can see you're interested in our pricing and licensing options! "
-                "Let me connect you with our sales team who can provide detailed information about:\n\n"
-                "• Custom pricing for your organization size\n"
-                "• Enterprise features and licensing\n"
-                "• Implementation timeline and support\n"
-                "• Volume discounts and contract terms\n\n"
-                "They'll reach out within 30 minutes to discuss your specific needs."
+        # For pricing/sales inquiries with good confidence, provide RAG answer 
+        if intent.get('is_sales_inquiry') and confidence >= 0.70:
+            pricing_prefix = (
+                "Here's what I can tell you about our pricing and offerings:\n\n"
             )
+            pricing_suffix = (
+                "\n\nFor detailed pricing specific to your organization size and needs, "
+                "I can also connect you with our sales team for a personalized quote."
+            )
+            return pricing_prefix + base_answer + pricing_suffix
         
         # If this is a demo request, handle appropriately  
         if intent.get('is_demo_request'):

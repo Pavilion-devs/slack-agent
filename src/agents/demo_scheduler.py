@@ -226,12 +226,22 @@ class DemoSchedulerAgent(BaseAgent):
                     'confidence': 0.8
                 }
         
-        # Check for confirmatory responses
+        # Check for confirmatory responses - ONLY respond to explicit confirmations
+        # DO NOT match initial booking requests like "How can I book a demo?"
         confirmatory_patterns = [
-            r'yes', r'sure', r'ok', r'okay', r'sounds?\s+good', r'perfect',
-            r'that.*works', r'i\'ll.*take', r'book.*it', r'confirm',
-            r'let\'s.*do.*it', r'go.*ahead'
+            r'^yes$', r'^sure$', r'^ok$', r'^okay$',  # Only exact words
+            r'sounds?\s+good$', r'perfect$',  # Only at end of message
+            r'that.*works$', r'book.*it$', r'confirm$',  # Only at end
+            r'let\'s.*do.*it$', r'go.*ahead$'  # Only at end
         ]
+        
+        # NEVER treat questions as confirmations
+        if '?' in content_lower:
+            return None
+        
+        # NEVER treat "how can i" or "how do i" as confirmations  
+        if any(phrase in content_lower for phrase in ['how can i', 'how do i', 'how to']):
+            return None
         
         for pattern in confirmatory_patterns:
             if re.search(pattern, content_lower):
@@ -243,7 +253,7 @@ class DemoSchedulerAgent(BaseAgent):
         return None
     
     async def _handle_conversational_scheduling(self, message: SupportMessage, scheduling_info: Dict[str, Any]) -> tuple[str, bool, str]:
-        """Handle scheduling with proper conversational flow."""
+        """Handle scheduling with proper conversational flow - show slots first, then book."""
         content_lower = message.content.lower()
         
         # Check if user is asking for a specific day
@@ -255,8 +265,8 @@ class DemoSchedulerAgent(BaseAgent):
         
         # Check if this is an initial scheduling request
         if any(word in content_lower for word in ['schedule', 'book', 'demo', 'meeting']):
-            # Ask what day they prefer
-            return await self._initiate_day_selection(), False, ""
+            # Show available slots first instead of asking for day preference
+            return await self._show_available_slots(scheduling_info)
         
         # Default fallback
         return "I'd be happy to help schedule a demo! What day works best for you this week?", False, ""
@@ -269,6 +279,52 @@ class DemoSchedulerAgent(BaseAgent):
                 return day
         return None
     
+    async def _show_available_slots(self, scheduling_info: Dict[str, Any]) -> tuple[str, bool, str]:
+        """Show available time slots to user first before booking."""
+        try:
+            # Get available slots
+            meeting_type = scheduling_info.get('meeting_type', 'demo')
+            available_slots = await calendar_service.get_available_slots(
+                days_ahead=7, 
+                meeting_type=meeting_type, 
+                max_slots=5
+            )
+            
+            if not available_slots:
+                response = (
+                    "I'd love to schedule a demo for you! Unfortunately, our calendar is quite busy this week. "
+                    "Let me connect you with our sales team who can find alternative times or check for cancellations."
+                )
+                return response, True, "No available slots - escalating to sales team"
+            
+            # Build response showing available slots
+            meeting_config = scheduling_info.get('meeting_config')
+            meeting_name = meeting_config.name if meeting_config else 'demo'
+            
+            response = f"I'd be happy to help schedule your {meeting_name}! 📅\n\n"
+            response += "Here are our available time slots:\n\n"
+            
+            # Show top 3-4 slots
+            for i, slot in enumerate(available_slots[:4], 1):
+                # Format time nicely
+                time_str = slot.start_time.strftime('%A, %B %d at %I:%M %p')
+                end_time = slot.start_time + timedelta(minutes=slot.duration_minutes)
+                end_str = end_time.strftime('%I:%M %p %Z')
+                response += f"{i}. {time_str} - {end_str}\n"
+            
+            response += "\n💡 **To book your demo:**\n"
+            response += "Simply reply with the option number (e.g., \"1\", \"Option 2\", or \"Book slot 3\")\n\n"
+            response += "Which time works best for you?"
+            
+            return response, False, ""
+            
+        except Exception as e:
+            logger.error(f"Error showing available slots: {e}")
+            return (
+                "I'd love to schedule a demo for you! I'm having trouble accessing our calendar right now. "
+                "Let me connect you with our sales team who can schedule your demo immediately."
+            ), True, f"Calendar error: {str(e)}"
+
     async def _initiate_day_selection(self) -> str:
         """Start the conversational flow by asking for day preference."""
         return (
