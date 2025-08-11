@@ -17,7 +17,7 @@ class ModerationFilter:
             r'\b(stupid|dumb|idiotic|moronic|useless|pathetic)\b',
             r'\b(hate|despise|loathe|disgusting|awful)\b',
             r'\b(fuck|fucking|damn|damn it|wtf|bullshit)\b',
-            r'\b(you guys are|this is|this service is)\s+(trash|garbage|shit|awful|terrible|horrible|worst|stupid|useless)\b',
+            r'\b(you guys are|this service is)\s+(trash|garbage|shit|awful|terrible|horrible|worst|stupid|useless)\b',
         ]
         
         # Legal/privacy patterns - should suppress sales CTAs

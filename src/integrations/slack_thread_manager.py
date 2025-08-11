@@ -120,13 +120,6 @@ class SlackThreadManager:
                 ]
             },
             {
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Reason for Escalation:*\n{session.escalation_reason}"
-                }
-            },
-            {
                 "type": "divider"
             },
             {
@@ -411,7 +404,7 @@ class SlackThreadManager:
                 await client.chat_postMessage(
                     channel=body["channel"]["id"],
                     thread_ts=body["message"]["ts"],
-                    text=f"🔒 Ticket closed by <@{agent_user_id}>. Session `{session_id}` has been archived."
+                    text=f"🔒 Ticket closed by <@{agent_user_id}>."
                 )
                 
                 logger.info(f"Session {session_id} closed by agent {agent_user_id}")

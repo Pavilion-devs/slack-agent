@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     # OpenAI Configuration (Optional)
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
     
+    # Supabase Configuration (for session management)
+    supabase_url: Optional[str] = Field(default=None, env="SUPABASE_URL")
+    supabase_key: Optional[str] = Field(default=None, env="SUPABASE_KEY")
+    
     # Ollama Configuration
     ollama_base_url: str = Field(default="http://localhost:11434", env="OLLAMA_BASE_URL")
     

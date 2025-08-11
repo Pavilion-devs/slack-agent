@@ -10,6 +10,8 @@ from datetime import datetime
 from src.models.schemas import SupportMessage, AgentState
 from src.integrations.slack_client import slack_client
 from src.workflows.langgraph_workflow import langgraph_workflow
+from src.core.session_manager import SessionManager
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,19 @@ class DelveLangGraphWorkflow:
         self.workflow_name = "delve_langgraph_workflow"
         self.system_initialized = False
         self.responder_agent = responder_agent  # New bidirectional responder system
+        
+        # Initialize session manager for direct escalation handling
+        self.session_manager = None
+        if settings.supabase_url and settings.supabase_key:
+            try:
+                self.session_manager = SessionManager(
+                    supabase_url=settings.supabase_url,
+                    supabase_key=settings.supabase_key
+                )
+                logger.info("Session manager initialized for escalation handling")
+            except Exception as e:
+                logger.error(f"Failed to initialize session manager: {e}")
+        
         logger.info("Delve LangGraph Workflow initialized")
     
     async def process_message(self, message: SupportMessage) -> AgentState:
@@ -36,6 +51,11 @@ class DelveLangGraphWorkflow:
         """
         try:
             logger.info(f"Processing message {message.message_id} through Delve LangGraph workflow")
+            
+            # Step 0: Check if AI is disabled due to human agent assignment
+            if await self._is_ai_disabled_for_message(message):
+                logger.info(f"AI disabled for message {message.message_id} - human agent assigned")
+                return self._create_human_assigned_state(message)
             
             # Step 1: Send immediate acknowledgment
             try:
@@ -70,11 +90,8 @@ class DelveLangGraphWorkflow:
                                 message, final_response
                             )
                         else:
-                            # Fallback to legacy escalation for backward compatibility
-                            await slack_client.send_escalation_notification(
-                                message,
-                                final_response.escalation_reason
-                            )
+                            # Fallback: Create session directly when no responder agent
+                            await self._handle_escalation_direct(message, final_response)
                         logger.info(f"Escalation handled for message {message.message_id}")
                         
                 except Exception as e:
@@ -141,6 +158,57 @@ class DelveLangGraphWorkflow:
             
             return error_state
     
+    async def _handle_escalation_direct(
+        self,
+        message: SupportMessage,
+        final_response
+    ) -> None:
+        """Handle escalation by creating session directly (when no responder agent available)."""
+        try:
+            if not self.session_manager:
+                logger.warning("No session manager available - escalation will only be logged")
+                await slack_client.send_escalation_notification(
+                    message,
+                    final_response.escalation_reason
+                )
+                return
+            
+            # Build conversation history from available context
+            conversation_history = []
+            
+            # Add the current AI response to history
+            conversation_history.append({
+                'sender': 'AI Agent',
+                'content': final_response.response_text,
+                'timestamp': datetime.now().isoformat(),
+                'confidence_score': getattr(final_response, 'confidence_score', 0.0),
+                'agent_name': getattr(final_response, 'agent_name', 'unknown')
+            })
+            
+            # Create escalation session directly
+            session = await self.session_manager.create_session(
+                user_id=message.user_id,
+                channel_id=message.channel_id,
+                escalation_reason=final_response.escalation_reason,
+                history=conversation_history
+            )
+            
+            logger.info(f"Created escalation session directly: {session.session_id}")
+            
+            # Send escalation notification to Slack
+            await slack_client.send_escalation_notification(
+                message,
+                final_response.escalation_reason
+            )
+            
+        except Exception as e:
+            logger.error(f"Error in direct escalation handling: {e}")
+            # Final fallback - just send notification
+            await slack_client.send_escalation_notification(
+                message,
+                final_response.escalation_reason
+            )
+    
     async def _handle_escalation_through_responder(
         self, 
         message: SupportMessage, 
@@ -176,11 +244,8 @@ class DelveLangGraphWorkflow:
             
         except Exception as e:
             logger.error(f"Error escalating through responder system: {e}")
-            # Fallback to legacy escalation
-            await slack_client.send_escalation_notification(
-                message,
-                final_response.escalation_reason
-            )
+            # Fallback: Create session directly if responder system fails
+            await self._handle_escalation_direct(message, final_response)
     
     def set_responder_agent(self, responder_agent):
         """Set the responder agent for handling escalations."""
@@ -240,6 +305,63 @@ class DelveLangGraphWorkflow:
             'workflow_type': 'langgraph',
             'description': 'LangGraph-based workflow with intent detection, planning, and parallel execution'
         }
+    
+    async def _is_ai_disabled_for_message(self, message: SupportMessage) -> bool:
+        """Check if AI should be disabled for this message (human agent assigned)."""
+        try:
+            # For Chainlit messages, check session by user info
+            if message.channel_id.startswith('chainlit_'):
+                from src.core.session_manager import SessionManager
+                from src.core.config import settings
+                
+                session_manager = SessionManager(
+                    supabase_url=settings.supabase_url,
+                    supabase_key=settings.supabase_key
+                )
+                
+                # Find only ASSIGNED sessions for this user (not closed ones)
+                assigned_sessions = await session_manager.get_sessions_by_state("assigned")
+                
+                # Check if this user has any actively assigned sessions
+                for session in assigned_sessions:
+                    if session.user_id == message.user_id and session.ai_disabled:
+                        logger.info(f"AI disabled for user {message.user_name} - active session {session.session_id} assigned to {session.assigned_agent_name}")
+                        return True
+                        
+                # Debug: Log all sessions for this user to understand the state
+                all_user_sessions = await session_manager.get_sessions_by_user(message.user_id)
+                logger.info(f"DEBUG: User {message.user_name} has {len(all_user_sessions)} total sessions:")
+                for session in all_user_sessions:
+                    logger.info(f"  - Session {session.session_id}: state={session.state.value}, ai_disabled={session.ai_disabled}, assigned_to={session.assigned_to}")
+                
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking AI disabled status: {e}")
+            return False
+    
+    def _create_human_assigned_state(self, message: SupportMessage) -> AgentState:
+        """Create an AgentState indicating human agent is handling this conversation."""
+        from src.models.schemas import AgentResponse
+        
+        # Create a response indicating human agent is handling
+        human_response = AgentResponse(
+            agent_name="human_agent_handler",
+            response_text="Your request is currently being handled by one of our support specialists. They will respond shortly.",
+            confidence_score=1.0,
+            sources=[],
+            should_escalate=False,
+            escalation_reason="Human agent already assigned",
+            metadata={'ai_disabled': True, 'human_assigned': True}
+        )
+        
+        return AgentState(
+            message=message,
+            agent_responses=[human_response],
+            escalated=False,
+            final_response=human_response.response_text,
+            processing_completed=datetime.now()
+        )
 
 
 # Global instance

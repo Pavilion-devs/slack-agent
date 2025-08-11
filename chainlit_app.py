@@ -24,6 +24,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from src.models.schemas import SupportMessage
 from src.workflows.delve_langgraph_workflow import delve_langgraph_workflow
 from src.core.intent_classifier import IntentClassifier
+from src.core.session_manager import SessionManager
+from src.core.config import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -116,6 +118,181 @@ async def on_chat_start():
         "routing_accuracy": [],
         "processing_times": []
     })
+    
+    # Check for existing human-assigned sessions and display messages
+    await check_for_human_agent_messages()
+    
+    # Start background notification polling
+    asyncio.create_task(poll_for_notifications())
+
+async def check_for_human_agent_messages():
+    """Check for new messages from human agents and display them."""
+    try:
+        logger.info("DEBUG: Starting to check for human agent messages")
+        
+        if not settings.supabase_url or not settings.supabase_key:
+            logger.warning("DEBUG: No Supabase credentials - skipping message check")
+            return
+            
+        user_info = cl.user_session.get("user_info", {})
+        user_id = f"chainlit_{user_info.get('email', 'unknown')}"
+        logger.info(f"DEBUG: Checking messages for user_id: {user_id}")
+        
+        # Get session manager
+        session_manager = SessionManager(
+            supabase_url=settings.supabase_url,
+            supabase_key=settings.supabase_key
+        )
+        
+        # Find user's assigned sessions (where human agent is handling)
+        user_sessions = await session_manager.get_sessions_by_user(user_id)
+        logger.info(f"DEBUG: Found {len(user_sessions)} total user sessions")
+        
+        # Track last seen message timestamp in session
+        last_seen_key = "last_human_message_seen"
+        last_seen = cl.user_session.get(last_seen_key, None)
+        logger.info(f"DEBUG: Last seen timestamp: {last_seen}")
+        
+        found_assigned_sessions = False
+        
+        for session in user_sessions:
+            logger.info(f"DEBUG: Session {session.session_id}: state={session.state.value}, ai_disabled={session.ai_disabled}, assigned_agent={session.assigned_agent_name}")
+            
+            if session.state.value == "assigned" and session.ai_disabled:
+                found_assigned_sessions = True
+                agent_name = session.assigned_agent_name or "Human Agent"
+                logger.info(f"DEBUG: Processing assigned session {session.session_id} with agent {agent_name}")
+                logger.info(f"DEBUG: Session has {len(session.history)} messages in history")
+                
+                # Check for new human agent messages in this session
+                new_messages = []
+                for i, message in enumerate(session.history):
+                    logger.info(f"DEBUG: Message {i}: sender={message.get('sender')}, timestamp={message.get('timestamp')}, content={message.get('content', '')[:50]}...")
+                    if (message.get('sender') == 'human_agent' and 
+                        message.get('timestamp') and
+                        (not last_seen or message['timestamp'] > last_seen)):
+                        new_messages.append(message)
+                        logger.info(f"DEBUG: Found new human agent message: {message.get('content', '')[:50]}...")
+                
+                logger.info(f"DEBUG: Found {len(new_messages)} new human agent messages")
+                
+                # Display new messages
+                for message in new_messages:
+                    await cl.Message(
+                        content=f"👋 **{agent_name}**: {message['content']}"
+                    ).send()
+                    logger.info(f"DEBUG: Displayed message from {agent_name}")
+                    
+                    # Update last seen timestamp
+                    cl.user_session.set(last_seen_key, message['timestamp'])
+                    logger.info(f"DEBUG: Updated last seen to: {message['timestamp']}")
+                    
+                # Status tracking for cleaner UI - no message displayed but state maintained
+                if not new_messages and session.assigned_agent_name:
+                    status_shown_key = f"status_shown_{session.session_id}"
+                    if not cl.user_session.get(status_shown_key, False):
+                        # Status message removed for cleaner UI - functionality maintained in background
+                        cl.user_session.set(status_shown_key, True)
+                        logger.info(f"DEBUG: Human agent {agent_name} handling conversation (hidden from UI for cleaner experience)")
+        
+        if not found_assigned_sessions:
+            logger.info("DEBUG: No assigned sessions found for user")
+                        
+    except Exception as e:
+        logger.error(f"Error checking for human agent messages: {e}")
+        import traceback
+        logger.error(f"DEBUG: Full traceback: {traceback.format_exc()}")
+
+async def poll_for_notifications():
+    """Background task to poll for real-time notifications from Slack server."""
+    import os
+    import json
+    import glob
+    
+    notifications_dir = "/tmp/chainlit_notifications"
+    processed_files = set()
+    
+    logger.info("Starting notification polling for real-time messages")
+    
+    while True:
+        try:
+            # Check for new notification files
+            if os.path.exists(notifications_dir):
+                pattern = f"{notifications_dir}/*.json"
+                notification_files = glob.glob(pattern)
+                
+                for file_path in notification_files:
+                    if file_path not in processed_files:
+                        try:
+                            with open(file_path, 'r') as f:
+                                notification = json.load(f)
+                            
+                            # Process human message notifications
+                            if notification['type'] == 'human_message':
+                                message_data = notification['message']
+                                agent_name = message_data.get('sender_name', 'Human Agent')
+                                content = message_data.get('content', '')
+                                
+                                await cl.Message(
+                                    content=f"👋 **{agent_name}**: {content}"
+                                ).send()
+                                
+                                logger.info(f"Delivered real-time message from {agent_name}")
+                                
+                                # Update last seen timestamp to avoid duplicates
+                                cl.user_session.set("last_human_message_seen", message_data.get('timestamp'))
+                            
+                            processed_files.add(file_path)
+                            
+                            # Clean up old notification file
+                            os.remove(file_path)
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing notification file {file_path}: {e}")
+            
+            # Poll every 2 seconds
+            await asyncio.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"Error in notification polling: {e}")
+            await asyncio.sleep(5)  # Wait longer on error
+
+async def send_customer_message_to_slack(session, customer_message):
+    """Send customer message to the Slack thread."""
+    try:
+        from slack_sdk.web.async_client import AsyncWebClient
+        
+        if not settings.slack_bot_token:
+            logger.warning("No Slack bot token available - cannot send customer message to Slack")
+            return
+        
+        slack_client = AsyncWebClient(token=settings.slack_bot_token)
+        
+        # Format customer message for Slack
+        customer_name = customer_message.get('sender_name', 'Customer')
+        content = customer_message.get('content', '')
+        
+        message_text = f"💬 **{customer_name}**: {content}"
+        
+        # Send to the session's Slack thread
+        if hasattr(session, 'thread_ts') and session.thread_ts:
+            response = await slack_client.chat_postMessage(
+                channel="#support-escalations",
+                thread_ts=session.thread_ts,
+                text=message_text
+            )
+            
+            if response["ok"]:
+                logger.info(f"Customer message sent to Slack thread {session.thread_ts}")
+            else:
+                logger.error(f"Failed to send customer message to Slack: {response}")
+        else:
+            logger.warning(f"Session {session.session_id} has no thread_ts - cannot send to Slack")
+            
+    except Exception as e:
+        logger.error(f"Error sending customer message to Slack: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 @cl.action_callback("test_")
 async def on_test_action(action):
@@ -275,6 +452,10 @@ async def process_test_action(action):
 @cl.on_message
 async def on_message(message: cl.Message):
     """Handle incoming messages from the user."""
+    # First check for any new human agent messages
+    await check_for_human_agent_messages()
+    
+    # Then process the user's message
     await process_message_content(message.content, is_test=False)
 
 async def process_message_content(content: str, is_test: bool = False):
@@ -290,6 +471,64 @@ async def process_message_content(content: str, is_test: bool = False):
         "email": "olaboyefavour52@gmail.com",
         "company": "Google"
     })
+    
+    # Check if user has an active human-assigned session
+    if settings.supabase_url and settings.supabase_key:
+        try:
+            user_id = f"chainlit_{user_info.get('email', 'unknown')}"
+            logger.info(f"DEBUG: Checking customer message routing for user_id: {user_id}")
+            
+            session_manager = SessionManager(
+                supabase_url=settings.supabase_url,
+                supabase_key=settings.supabase_key
+            )
+            
+            user_sessions = await session_manager.get_sessions_by_user(user_id)
+            logger.info(f"DEBUG: Found {len(user_sessions)} user sessions for message routing")
+            
+            # Check if user has an active session with human agent assigned
+            human_assigned_session = None
+            for session in user_sessions:
+                logger.info(f"DEBUG: Message routing - Session {session.session_id}: state={session.state.value}, ai_disabled={session.ai_disabled}, assigned_agent={session.assigned_agent_name}")
+                
+                if session.state.value == "assigned" and session.ai_disabled:
+                    human_assigned_session = session
+                    logger.info(f"DEBUG: Found human-assigned session for customer message: {session.session_id}")
+                    break
+            
+            if human_assigned_session:
+                # Route customer message to human agent via session storage
+                agent_name = human_assigned_session.assigned_agent_name or "Human Agent"
+                logger.info(f"DEBUG: Routing customer message to {agent_name} in session {human_assigned_session.session_id}")
+                
+# Status message removed for cleaner UI - functionality maintained in background
+                logger.info(f"Customer message routed to {agent_name} (hidden from UI for cleaner experience)")
+                
+                # Add customer message to session history
+                customer_message = {
+                    'sender': 'customer',
+                    'sender_name': user_info.get('name', 'Customer'),
+                    'content': content,
+                    'timestamp': datetime.now().isoformat(),
+                    'platform': 'chainlit'
+                }
+                
+                await session_manager.add_message_to_session(
+                    human_assigned_session.session_id, 
+                    customer_message
+                )
+                
+                # Send customer message to Slack thread
+                await send_customer_message_to_slack(human_assigned_session, customer_message)
+                logger.info(f"Customer message routed to human agent in session {human_assigned_session.session_id}")
+                return
+            else:
+                logger.info("DEBUG: No human-assigned session found - processing with AI")
+                
+        except Exception as e:
+            logger.error(f"Error checking human assignment: {e}")
+            import traceback
+            logger.error(f"DEBUG: Customer routing error traceback: {traceback.format_exc()}")
     
     # Get conversation history
     conversation_history = cl.user_session.get("conversation_history", [])
@@ -319,7 +558,59 @@ async def process_message_content(content: str, is_test: bool = False):
         user_email=user_info.get("email", "not-provided@example.com")
     )
     
-    # Show processing message
+    # Check if user has an active session with human agent assigned
+    session_manager = SessionManager(
+        supabase_url=settings.supabase_url,
+        supabase_key=settings.supabase_key
+    )
+    
+    user_sessions = await session_manager.get_sessions_by_user(support_message.user_id)
+    human_assigned_session = None
+    
+    for session in user_sessions:
+        if session.ai_disabled and session.state.value == "assigned":
+            human_assigned_session = session
+            break
+    
+    # If human agent is assigned, show different UI
+    if human_assigned_session:
+        agent_name = human_assigned_session.assigned_agent_name or "Human Agent"
+        await cl.Message(
+            content=f"👋 **{agent_name}** is currently handling your conversation. They will respond to your message shortly.",
+            author="System"
+        ).send()
+        
+        # Add message to session history for human agent to see
+        customer_message = {
+            'sender': 'customer',
+            'sender_name': user_info.get('name', 'Customer'),
+            'content': content,  # Original content, not enriched
+            'timestamp': datetime.now().isoformat(),
+            'platform': 'chainlit'
+        }
+        await session_manager.add_message_to_session(human_assigned_session.session_id, customer_message)
+        
+        # Check for closure messages in session history
+        latest_messages = human_assigned_session.history[-5:] if len(human_assigned_session.history) > 5 else human_assigned_session.history
+        
+        for msg in reversed(latest_messages):
+            if msg.get('message_type') == 'session_closure':
+                await cl.Message(
+                    content="🔚 **This conversation has been closed by our support team. Thank you for contacting us!**\n\nTo start a new conversation, please refresh the page.",
+                    author="System"
+                ).send()
+                return
+            elif msg.get('sender') == 'human_agent':
+                # Show the latest human agent message
+                await cl.Message(
+                    content=f"**{msg.get('sender_name', 'Human Agent')}:** {msg['content']}",
+                    author=msg.get('sender_name', 'Human Agent')
+                ).send()
+                return
+        
+        return  # Don't process through AI if human assigned
+    
+    # Show processing message for AI processing
     processing_msg = cl.Message(content="🤔 Processing your message...")
     await processing_msg.send()
     

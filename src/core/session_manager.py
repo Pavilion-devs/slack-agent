@@ -78,7 +78,10 @@ class ConversationSession:
             escalation_reason=data['escalation_reason'],
             history=json.loads(data['history']) if data['history'] else [],
             created_at=datetime.fromisoformat(data['created_at'].replace('Z', '+00:00')) if data.get('created_at') else None,
-            updated_at=datetime.fromisoformat(data['updated_at'].replace('Z', '+00:00')) if data.get('updated_at') else None
+            updated_at=datetime.fromisoformat(data['updated_at'].replace('Z', '+00:00')) if data.get('updated_at') else None,
+            ai_disabled=data.get('ai_disabled', False),
+            human_assigned_at=datetime.fromisoformat(data['human_assigned_at'].replace('Z', '+00:00')) if data.get('human_assigned_at') else None,
+            assigned_agent_name=data.get('assigned_agent_name')
         )
 
 
@@ -291,3 +294,105 @@ class SessionManager:
         except Exception as e:
             logger.error(f"Failed to get session stats: {e}")
             return {'active': 0, 'assigned': 0, 'closed': 0, 'total': 0}
+    
+    async def assign_human_agent(self, session_id: str, agent_id: str, agent_name: str) -> bool:
+        """Assign human agent to session and disable AI."""
+        try:
+            now = datetime.now(timezone.utc)
+            update_data = {
+                'state': SessionState.ASSIGNED.value,
+                'assigned_to': agent_id,
+                'assigned_agent_name': agent_name,
+                'human_assigned_at': now.isoformat(),
+                'ai_disabled': True,
+                'updated_at': now.isoformat()
+            }
+            
+            result = self.supabase.table(self.table_name).update(update_data).eq('session_id', session_id).execute()
+            
+            if result.data:
+                logger.info(f"Assigned session {session_id} to agent {agent_name} ({agent_id})")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to assign human agent to session {session_id}: {e}")
+            return False
+    
+    async def is_ai_disabled(self, session_id: str) -> bool:
+        """Check if AI is disabled for this session (human agent assigned)."""
+        try:
+            session = await self.get_session(session_id)
+            return session.ai_disabled if session else False
+        except Exception as e:
+            logger.error(f"Failed to check AI status for session {session_id}: {e}")
+            return False
+    
+    async def get_human_agent_info(self, session_id: str) -> Optional[Dict[str, str]]:
+        """Get assigned human agent information."""
+        try:
+            session = await self.get_session(session_id)
+            if session and session.assigned_to:
+                return {
+                    'agent_id': session.assigned_to,
+                    'agent_name': session.assigned_agent_name or 'Human Agent',
+                    'assigned_at': session.human_assigned_at.isoformat() if session.human_assigned_at else None
+                }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get human agent info for session {session_id}: {e}")
+            return None
+    
+    async def close_session(self, session_id: str, closed_by_agent_id: str = None) -> bool:
+        """Close a session and end the conversation."""
+        try:
+            now = datetime.now(timezone.utc)
+            
+            # Add closure message to history
+            closure_message = {
+                'sender': 'system',
+                'content': 'Conversation closed by human agent.',
+                'timestamp': now.isoformat(),
+                'platform': 'slack',
+                'closed_by': closed_by_agent_id
+            }
+            
+            # Get current session to append closure message
+            session = await self.get_session(session_id)
+            if session:
+                session.history.append(closure_message)
+            
+            update_data = {
+                'state': SessionState.CLOSED.value,
+                'updated_at': now.isoformat(),
+                'history': json.dumps(session.history if session else [closure_message])
+            }
+            
+            result = self.supabase.table(self.table_name).update(update_data).eq('session_id', session_id).execute()
+            
+            if result.data:
+                logger.info(f"Session {session_id} closed by agent {closed_by_agent_id}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to close session {session_id}: {e}")
+            return False
+    
+    async def get_sessions_by_user(self, user_id: str) -> List['ConversationSession']:
+        """Get all sessions for a specific user."""
+        try:
+            result = self.supabase.table(self.table_name).select("*").eq('user_id', user_id).order('escalated_at', desc=True).execute()
+            
+            return [ConversationSession.from_dict(data) for data in result.data]
+        except Exception as e:
+            logger.error(f"Failed to get sessions for user {user_id}: {e}")
+            return []
+    
+    async def get_sessions_by_state(self, state: str) -> List['ConversationSession']:
+        """Get all sessions in a specific state."""
+        try:
+            result = self.supabase.table(self.table_name).select("*").eq('state', state).order('escalated_at', desc=True).execute()
+            
+            return [ConversationSession.from_dict(data) for data in result.data]
+        except Exception as e:
+            logger.error(f"Failed to get sessions by state {state}: {e}")
+            return []

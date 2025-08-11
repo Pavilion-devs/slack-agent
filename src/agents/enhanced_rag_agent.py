@@ -260,9 +260,7 @@ class EnhancedRAGAgent(BaseAgent):
             return base_answer
         elif suppress_sales:
             return (
-                f"{base_answer}\n\n"
-                "If you need additional assistance with this matter, "
-                "I can connect you with our support team."
+                f"{base_answer}"
             )
         
         # Return enhanced base answer for high-confidence responses

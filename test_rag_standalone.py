@@ -25,7 +25,8 @@ class RAGTester:
     
     def __init__(self):
         self.test_questions = [
-            "I work at a startup with 25 employees.What's your pricing for my company size?"
+            "For a 25-employee startup, what exactly is included in Delve’s SOC 2 pricing? Please confirm whether manual penetration testing and all auditor fees are included, any user limits, and whether renewal pricing changes year over year.",
+            "How fast can we complete SOC 2 Type II with Delve? Break down the timeline for onboarding, hours of platform setup, observation period, audit duration, and any speed records you’ve achieved."
         ]
     
     async def initialize_rag(self) -> bool:
