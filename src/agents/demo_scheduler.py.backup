@@ -56,7 +56,6 @@ class DemoSchedulerAgent(BaseAgent):
             r'option\s*\d+', r'slot\s*\d+', r'choice\s*\d+', r'number\s*\d+',
             r'book\s*\d+', r'select\s*\d+', r'pick\s*\d+', r'choose\s*\d+',
             r'^\d+$',  # Just a number like "3"
-            r'^\s*\d+\s*$',  # Number with whitespace
             r'yes.*(?:to\s+)?(?:tuesday|wednesday|thursday|friday|monday)',
             r'i\'?ll\s+take\s+(?:the\s+)?(?:tuesday|wednesday|thursday|friday|monday)',
             r'that.*(?:works|perfect|good)', r'confirm.*(?:booking|meeting)',
@@ -138,7 +137,7 @@ class DemoSchedulerAgent(BaseAgent):
                 return self.format_response(
                     response_text="I don't see any available demo slots in the next week. Let me connect you with our sales team who can find alternative times that work for you.",
                     confidence_score=0.7,
-                    should_escalate=True,
+                    escalate=True,
                     escalation_reason="No available demo slots found"
                 )
             
@@ -151,19 +150,8 @@ class DemoSchedulerAgent(BaseAgent):
                 max_slots_display=6
             )
             
-            # Detect platform from message context
-            platform = getattr(message, 'platform', None)
-            if not platform:
-                # Try to detect from channel_id
-                if hasattr(message, 'channel_id') and message.channel_id:
-                    if 'chainlit' in message.channel_id.lower():
-                        platform = "chainlit"
-                    elif 'slack' in message.channel_id.lower():
-                        platform = "slack"
-                    else:
-                        platform = "text"
-                else:
-                    platform = "chainlit"  # Default to chainlit for testing
+            # Detect platform (can be enhanced later to get from message context)
+            platform = "text"  # Default, could be determined from message source
             
             # Format response text with slot options
             response_text = self._format_slot_picker_message(scheduler_response, platform)
@@ -181,9 +169,6 @@ class DemoSchedulerAgent(BaseAgent):
                 metadata["interactive_elements"]["slack_blocks"] = slot_ui_generator.generate_slack_blocks(scheduler_response)
             elif platform.lower() == "chainlit":
                 metadata["interactive_elements"]["chainlit_actions"] = slot_ui_generator.generate_chainlit_actions(scheduler_response)
-            else:
-                # For testing, always generate chainlit actions as fallback
-                metadata["interactive_elements"]["chainlit_actions"] = slot_ui_generator.generate_chainlit_actions(scheduler_response)
             
             # Add web interface data for future use
             metadata["interactive_elements"]["web_data"] = slot_ui_generator.generate_web_interface_data(scheduler_response)
@@ -191,7 +176,7 @@ class DemoSchedulerAgent(BaseAgent):
             return self.format_response(
                 response_text=response_text,
                 confidence_score=0.95,
-                should_escalate=False,
+                escalate=False,
                 metadata=metadata
             )
             
@@ -200,7 +185,7 @@ class DemoSchedulerAgent(BaseAgent):
             return self.format_response(
                 response_text="I'd love to help schedule your demo! Our calendar system is currently being updated. Let me connect you with our sales team who can schedule your demo immediately.",
                 confidence_score=0.7,
-                should_escalate=True,
+                escalate=True,
                 escalation_reason=f"Error generating slots: {e}"
             )
     

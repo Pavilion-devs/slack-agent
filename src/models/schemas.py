@@ -39,6 +39,8 @@ class SupportMessage(BaseModel):
     timestamp: datetime
     content: str
     thread_ts: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
     urgency_level: UrgencyLevel = UrgencyLevel.MEDIUM
     category: MessageCategory = MessageCategory.GENERAL
     confidence_score: Optional[float] = None
@@ -71,6 +73,9 @@ class AgentResponse(BaseModel):
     should_escalate: bool = False
     escalation_reason: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Additional fields for responder agent
+    session_id: Optional[str] = None
+    requires_human_input: bool = False
 
 
 class AgentState(BaseModel):

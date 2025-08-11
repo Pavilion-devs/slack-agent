@@ -25,14 +25,7 @@ class RAGTester:
     
     def __init__(self):
         self.test_questions = [
-            "What is Delve?",
-            "How does SOC2 compliance work?",
-            "How does Delve help with HIPAA compliance?",
-            "What is the timeline for HIPAA implementation?",
-            "Tell me about GDPR compliance",
-            "What are the pricing options?",
-            "How long does implementation take?",
-            "What are the technical requirements?",
+            "I work at a startup with 25 employees.What's your pricing for my company size?"
         ]
     
     async def initialize_rag(self) -> bool:

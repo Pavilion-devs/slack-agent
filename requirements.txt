@@ -32,3 +32,6 @@ sentence-transformers>=2.2.2
 beautifulsoup4>=4.12.0
 html2text>=2020.1.16
 chainlit>=1.0.0
+supabase>=2.0.0
+postgrest>=0.13.0
+psycopg2-binary>=2.9.0

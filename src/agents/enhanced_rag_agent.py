@@ -20,33 +20,8 @@ class EnhancedRAGAgent(BaseAgent):
         self.min_confidence_for_auto_response = 0.80
         self.rag_initialized = False
         
-        # Fast-path cache for common queries
-        self.fast_cache = {
-            "what is delve": {
-                "answer": "Delve is the leading AI-native compliance automation platform, serving over 500 companies including AI unicorns like Lovable, Bland, and Wispr Flow. Founded in 2023 by 21-year-old MIT AI researchers Karun Kaushik and Selin Kocalar, Delve helps companies achieve SOC 2, HIPAA, GDPR, and ISO 27001 certifications in days rather than months through revolutionary AI agents that eliminate manual busywork.",
-                "confidence": 0.95,
-                "should_escalate": False,
-                "sources": ["📖 Company Overview & Background"]
-            },
-            "what does delve do": {
-                "answer": "Delve provides AI-native compliance automation that helps companies achieve SOC 2, HIPAA, GDPR, and ISO 27001 certifications quickly. Our AI agents can navigate any interface, capture screenshots automatically, and collect evidence from fragmented systems without integration limitations. Customers typically complete SOC 2 implementation in just 10-15 hours of actual work time, compared to 150+ hours with traditional approaches.",
-                "confidence": 0.95,
-                "should_escalate": False,
-                "sources": ["📖 Revolutionary AI-First Approach", "📖 Service Offerings & Compliance Frameworks"]
-            },
-            "who founded delve": {
-                "answer": "Delve was founded in 2023 by 21-year-old MIT AI researchers Karun Kaushik and Selin Kocalar. The company recently raised $32M Series A at a $300M valuation and is part of Y Combinator's Winter 2024 batch.",
-                "confidence": 0.95,
-                "should_escalate": False,
-                "sources": ["📖 Company Overview & Background"]
-            },
-            "how fast is delve": {
-                "answer": "Delve is remarkably fast! Customers typically complete SOC 2 implementation in just 10-15 hours of actual work time (compared to 150+ hours traditionally), with full compliance achieved in 30 minutes onboarding + 10-15 hours platform setup + 1-3 weeks audit completion. Our speed record shows customers completing in as little as 4-7 days.",
-                "confidence": 0.95,
-                "should_escalate": False,
-                "sources": ["📖 SOC 2 Compliance (Flagship Offering)"]
-            }
-        }
+        # No hardcoded cache - let RAG system with OpenAI handle all questions intelligently
+        self.fast_cache = {}
     
     async def initialize(self) -> bool:
         """Initialize the RAG system."""
@@ -130,8 +105,12 @@ class EnhancedRAGAgent(BaseAgent):
             logger.debug(f"Extracted - Answer: '{answer[:100]}...', Confidence: {confidence}, "
                         f"RAG escalation: {should_escalate_rag}")
             
-            # Enhance response based on message analysis
-            enhanced_response = await self._enhance_response(message, answer, confidence, sources)
+            # Check for moderation context
+            from src.utils.moderation import moderation_filter
+            moderation_result = moderation_filter.analyze_message(message.content)
+            
+            # Enhance response based on message analysis and moderation
+            enhanced_response = await self._enhance_response(message, answer, confidence, sources, moderation_result)
             
             # Determine final escalation decision
             urgency = self.detect_urgency(message)
@@ -174,8 +153,13 @@ class EnhancedRAGAgent(BaseAgent):
                            f"Confidence escalation: {confidence < self.confidence_threshold}, "
                            f"Final decision: {should_escalate}")
             
+            # Apply session memory to avoid repetitive facts
+            from src.utils.session_memory import session_memory
+            session_id = f"user_{message.user_id}"  # Simple session ID based on user
+            final_response = session_memory.suppress_repetitive_facts(session_id, enhanced_response)
+            
             return self.format_response(
-                response_text=enhanced_response,
+                response_text=final_response,
                 confidence_score=confidence,
                 sources=sources,
                 should_escalate=should_escalate,
@@ -185,7 +169,8 @@ class EnhancedRAGAgent(BaseAgent):
                     "original_confidence": confidence,
                     "rag_escalation": should_escalate_rag,
                     "urgency": urgency,
-                    "intent": intent
+                    "intent": intent,
+                    "session_id": session_id
                 }
             )
             
@@ -203,21 +188,26 @@ class EnhancedRAGAgent(BaseAgent):
         message: SupportMessage, 
         base_answer: str, 
         confidence: float,
-        sources: List[str]
+        sources: List[str],
+        moderation_result: dict = None
     ) -> str:
-        """Enhance the RAG response based on message context."""
+        """Enhance the RAG response based on message context and moderation."""
         intent = self.extract_message_intent(message)
         
+        # Check if we should suppress sales CTAs
+        suppress_sales = False
+        if moderation_result:
+            from src.utils.moderation import moderation_filter
+            suppress_sales = moderation_filter.should_suppress_sales_cta(moderation_result)
+        
         # For pricing/sales inquiries with good confidence, provide RAG answer 
-        if intent.get('is_sales_inquiry') and confidence >= 0.70:
-            pricing_prefix = (
-                "Here's what I can tell you about our pricing and offerings:\n\n"
-            )
+        if intent.get('is_sales_inquiry') and confidence >= 0.70 and not suppress_sales:
+            # Just provide the answer - no boilerplate prefix
             pricing_suffix = (
                 "\n\nFor detailed pricing specific to your organization size and needs, "
                 "I can also connect you with our sales team for a personalized quote."
             )
-            return pricing_prefix + base_answer + pricing_suffix
+            return base_answer + pricing_suffix
         
         # If this is a demo request, handle appropriately  
         if intent.get('is_demo_request'):
@@ -260,11 +250,21 @@ class EnhancedRAGAgent(BaseAgent):
                 return compliance_prefix + base_answer
         
         # For general queries, check if we should be more helpful
-        if confidence < 0.7:
+        if confidence < 0.7 and not suppress_sales:
             return (
                 "I want to make sure you get the most accurate information for your question. "
                 "Let me connect you with our support team who can provide detailed, personalized guidance.\n\n"
                 f"In the meantime, here's what I found:\n\n{base_answer}"
+            )
+        
+        # For legal/privacy queries, keep it clean without sales pitch
+        if suppress_sales and confidence >= 0.4:
+            return base_answer
+        elif suppress_sales:
+            return (
+                f"{base_answer}\n\n"
+                "If you need additional assistance with this matter, "
+                "I can connect you with our support team."
             )
         
         # Return enhanced base answer for high-confidence responses

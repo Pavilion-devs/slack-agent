@@ -16,6 +16,8 @@ from src.core.rag_system import rag_system
 # NOTE: Import workflow and multi-agent system lazily to avoid circular imports
 from src.models.schemas import SupportMessage
 
+# Global responder setup (initialized during startup)
+responder_setup_global = None
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +43,24 @@ async def lifespan(app: FastAPI):
         workflow_healthy = await delve_langgraph_workflow.health_check()
         if not workflow_healthy:
             logger.warning("LangGraph workflow health check failed - will attempt initialization on first request")
+        
+        # Initialize bidirectional responder system for escalations
+        try:
+            from src.setup_responder_system import ResponderSystemSetup
+            global responder_setup_global
+            responder_setup_global = ResponderSystemSetup()
+            success = await responder_setup_global.initialize_system()
+            responder_agent = responder_setup_global.responder_agent if success else None
+            
+            if responder_agent:
+                # Connect responder agent to workflow for handling escalations
+                delve_langgraph_workflow.set_responder_agent(responder_agent)
+                logger.info("Responder system initialized and connected to LangGraph workflow")
+            else:
+                logger.warning("Responder system initialization failed - falling back to legacy escalations")
+        except Exception as responder_error:
+            logger.warning(f"Could not initialize responder system: {responder_error} - using legacy escalations")
+            responder_setup_global = None
         
         logger.info("Application startup completed (using LangGraph workflow)")
         
@@ -129,6 +149,76 @@ async def slack_events(request: Request):
         
     except Exception as e:
         logger.error(f"Error handling Slack event: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/slack/interactive")
+async def slack_interactive(request: Request):
+    """Handle Slack interactive button clicks."""
+    try:
+        # Use the global responder system initialized during startup
+        global responder_setup_global
+        
+        if not responder_setup_global or not responder_setup_global.thread_manager:
+            logger.error("Responder system not available for interactive requests")
+            return {"status": "error", "message": "Responder system not available"}
+        
+        # Parse the Slack payload
+        form_data = await request.form()
+        payload_str = form_data.get("payload")
+        
+        if not payload_str:
+            raise HTTPException(status_code=400, detail="No payload found")
+        
+        # Parse JSON payload
+        import json
+        payload = json.loads(payload_str)
+        
+        logger.info(f"Received interactive payload: {payload}")
+        
+        # Respond immediately to satisfy Slack's 3s requirement, then process in background
+        async def noop_ack():
+            return None
+
+        async def process_interaction():
+            try:
+                if payload.get("type") != "block_actions":
+                    logger.warning(f"Unsupported interactive payload type: {payload.get('type')}")
+                    return
+
+                action = payload["actions"][0]
+                action_id = action["action_id"]
+
+                # Backward-compatibility mapping for legacy buttons
+                # take_ownership -> accept_ticket, view_context -> view_history
+                mapped_action_id = {
+                    "take_ownership": "accept_ticket",
+                    "view_context": "view_history",
+                }.get(action_id, action_id)
+
+                logger.info(f"Processing action: {action_id} (mapped: {mapped_action_id})")
+
+                tm = responder_setup_global.thread_manager
+
+                if mapped_action_id == "accept_ticket":
+                    await tm.handle_accept_ticket(noop_ack, payload, tm.slack)
+                elif mapped_action_id == "view_history":
+                    await tm.handle_view_history(noop_ack, payload, tm.slack)
+                elif mapped_action_id == "close_ticket":
+                    await tm.handle_close_ticket(noop_ack, payload, tm.slack)
+                else:
+                    logger.warning(f"Unknown action_id: {action_id}")
+            except Exception as e:
+                logger.error(f"Interactive processing error: {e}")
+
+        # Kick off async processing
+        asyncio.create_task(process_interaction())
+
+        # Immediate OK to Slack
+        return {"status": "ok"}
+        
+    except Exception as e:
+        logger.error(f"Error handling Slack interactive request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -232,7 +322,7 @@ if __name__ == "__main__":
     
     # Run the application
     uvicorn.run(
-        "main:app",
+        "src.main:app",
         host=settings.host,
         port=settings.port,
         reload=settings.environment == "development",

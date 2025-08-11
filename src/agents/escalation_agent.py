@@ -220,62 +220,24 @@ class EscalationAgent(BaseAgent):
         return response
     
     async def _send_team_alerts(self, context: Dict[str, Any], target_team: Dict[str, Any]):
-        """Send alerts to appropriate team members via Slack."""
-        logger.info(f"Sending Slack alert to {target_team['team_name']} for {context['escalation_type']} escalation")
+        """Log team alerts (Slack notification handled by responder agent to avoid duplicates)."""
+        logger.info(f"Escalation routed to {target_team['team_name']} for {context['escalation_type']} escalation")
         
-        try:
-            # Import Slack client here to avoid circular imports
-            from src.integrations.slack_client import slack_client
-            
-            # Get the original message from context  
-            message = context.get('original_message')
-            if not message:
-                logger.warning("No original message found in escalation context - creating mock message")
-                # Create a minimal message object for Slack notification
-                from src.models.schemas import SupportMessage
-                from datetime import datetime
-                message = SupportMessage(
-                    user_id="escalation_user",
-                    channel_id="escalation_channel", 
-                    message_id=f"escalation_{datetime.now().timestamp()}",
-                    content=context.get('escalation_reason', 'Escalation requested'),
-                    timestamp=datetime.now(),
-                    user_email=context.get('customer_email'),
-                    user_name=context.get('customer_name')
-                )
-            
-            # Prepare escalation context for Slack notification
-            escalation_context = {
-                'meeting_type': context.get('intent', {}).get('detected_meeting_type'),
-                'urgency': context.get('urgency'),
-                'timezone': context.get('timezone'),
-                'escalation_type': context.get('escalation_type'),
-                'previous_agent': context.get('previous_agent'),
-                'confidence_score': context.get('confidence_score'),
-                'business_hours': context.get('business_hours')
-            }
-            
-            # Send rich Slack escalation notification
-            await slack_client.send_escalation_notification(
-                message=message,
-                escalation_reason=context.get('escalation_reason', 'Complex issue requiring human expertise'),
-                suggested_assignee=target_team.get('primary_contact'),
-                escalation_context=escalation_context
-            )
-            
-            logger.info(f"Slack escalation notification sent to {target_team.get('slack_channel', 'unknown channel')}")
-            
-        except Exception as e:
-            logger.error(f"Failed to send Slack alert: {e}")
-            # Fall back to logging the alert details
-            alert_data = {
-                "team": target_team["team_name"],
-                "urgency": context["urgency"],
-                "escalation_type": context.get("escalation_type"),
-                "escalation_reason": context["escalation_reason"],
-                "target_channel": target_team.get("slack_channel")
-            }
-            logger.info(f"Fallback alert logged: {alert_data}")
+        # Log the alert details (actual Slack notification handled by responder agent)
+        alert_data = {
+            "team": target_team["team_name"],
+            "urgency": context["urgency"],
+            "escalation_type": context.get("escalation_type"),
+            "escalation_reason": context["escalation_reason"],
+            "target_channel": target_team.get("slack_channel"),
+            "response_time": target_team.get("response_time"),
+            "notification_method": target_team.get("notification_method")
+        }
+        logger.info(f"Escalation routing logged: {alert_data}")
+        
+        # NOTE: Actual Slack notification will be sent by the responder agent's 
+        # thread manager to avoid duplicate messages. This agent focuses on 
+        # routing and response generation.
     
     def _extract_conversation_context(self, message: SupportMessage) -> Dict[str, Any]:
         """Extract relevant conversation context."""
@@ -312,21 +274,21 @@ class EscalationAgent(BaseAgent):
     def _load_escalation_routes(self) -> Dict[str, Dict[str, Any]]:
         """Load escalation routing configuration."""
         return {
-            "sales": {
+            "demo_booking": {
                 "team_name": "Sales Team",
-                "slack_channel": "#sales-escalations",
+                "slack_channel": "#sales-activity",
                 "primary_contact": "sales-lead",
                 "backup_contact": "sales-manager",
-                "specialties": ["pricing", "demos", "enterprise", "contracts"]
+                "specialties": ["demos", "meetings", "scheduling"]
             },
-            "engineering": {
-                "team_name": "Engineering Team", 
-                "slack_channel": "#eng-support",
-                "primary_contact": "tech-lead",
-                "backup_contact": "eng-manager",
-                "specialties": ["api", "sso", "integrations", "technical_issues"]
+            "support": {
+                "team_name": "Support Team", 
+                "slack_channel": "#support-escalations",
+                "primary_contact": "support-lead",
+                "backup_contact": "support-manager",
+                "specialties": ["technical", "compliance", "pricing", "general_support"]
             },
-            "compliance": {
+            "legacy_fallback": {
                 "team_name": "Compliance Team",
                 "slack_channel": "#compliance-support", 
                 "primary_contact": "compliance-lead",

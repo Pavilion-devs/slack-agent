@@ -40,6 +40,18 @@ class TimeParser:
             'gmt': 'GMT'
         }
         
+        # Timezone info mapping for dateutil parser to eliminate warnings
+        self.tzinfos = {
+            'EST': pytz.timezone('America/New_York'),
+            'PST': pytz.timezone('America/Los_Angeles'),
+            'CST': pytz.timezone('America/Chicago'),
+            'MST': pytz.timezone('America/Denver'),
+            'EDT': pytz.timezone('America/New_York'),  # Daylight time
+            'PDT': pytz.timezone('America/Los_Angeles'),
+            'CDT': pytz.timezone('America/Chicago'),
+            'MDT': pytz.timezone('America/Denver')
+        }
+        
         # Day of week mappings
         self.day_names = {
             'monday': 0, 'mon': 0,
@@ -224,8 +236,8 @@ class TimeParser:
             pass
         else:
             try:
-                # Try dateutil parser for other patterns
-                parsed_dt = dateutil_parser.parse(text, fuzzy=True)
+                # Try dateutil parser for other patterns with timezone info
+                parsed_dt = dateutil_parser.parse(text, fuzzy=True, tzinfos=self.tzinfos)
                 
                 # If no timezone info, assume target timezone
                 if parsed_dt.tzinfo is None:
@@ -387,10 +399,11 @@ class TimeParser:
         now = datetime.now(self.default_tz)
         
         if 'next week' in text:
-            # Next week (Monday to Friday)
-            days_until_next_monday = (7 - now.weekday()) % 7
-            if days_until_next_monday == 0:  # Today is Monday
-                days_until_next_monday = 7
+            # Next week (Monday to Friday) - always go to the following week
+            current_weekday = now.weekday()  # Monday=0, Sunday=6
+            days_until_next_monday = 7 - current_weekday  # Always next week's Monday
+            if current_weekday == 0:  # If today is Monday
+                days_until_next_monday = 7  # Go to next Monday
             next_monday = now + timedelta(days=days_until_next_monday)
             next_friday = next_monday + timedelta(days=4)
             return (next_monday.date(), next_friday.date())
@@ -419,15 +432,22 @@ class TimeParser:
         # Try to find specific day names for this/next week
         for day_name, day_num in self.day_names.items():
             if day_name in text:
+                # Calculate days ahead to the target day
                 days_ahead = (day_num - now.weekday()) % 7
-                if days_ahead == 0:  # Today
-                    target_date = now.date()
-                else:
-                    target_date = (now + timedelta(days=days_ahead)).date()
                 
-                # If "next" is mentioned, move to next week
                 if 'next' in text and day_name in text:
-                    target_date = (datetime.combine(target_date, time()) + timedelta(days=7)).date()
+                    # "next friday" - always go to next week's occurrence
+                    if days_ahead == 0:  # Same day of week
+                        days_ahead = 7  # Next week
+                    else:
+                        days_ahead += 7  # Add a week to get next week's occurrence
+                    target_date = (now + timedelta(days=days_ahead)).date()
+                else:
+                    # Just "friday" - next occurrence this week or next
+                    if days_ahead == 0:  # Today is that day
+                        target_date = now.date()
+                    else:
+                        target_date = (now + timedelta(days=days_ahead)).date()
                 
                 return (target_date, target_date)
         

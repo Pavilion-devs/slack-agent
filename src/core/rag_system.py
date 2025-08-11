@@ -106,36 +106,16 @@ class DelveRAGSystem:
         self.cache_max_size = 100
         self.cache_ttl = 3600  # 1 hour
         
-        # Common query patterns with pre-built responses
-        self.fast_responses = {
-            "what is delve": {
-                "answer": "Delve is the leading AI-native compliance automation platform serving over 500 companies including AI unicorns like Lovable, Bland, and Wispr Flow. Founded in 2023 by MIT AI researchers, Delve helps companies achieve SOC 2, HIPAA, GDPR, and ISO 27001 certifications in days rather than months using revolutionary AI agents that eliminate manual busywork.",
-                "confidence": 0.95,
-                "sources": ["📖 Company Overview & Background"],
-                "should_escalate": False
-            },
-            "delve pricing": {
-                "answer": "I'd be happy to help you learn about Delve's pricing! Our pricing is customized based on your organization's size and compliance needs. Let me connect you with our sales team who can provide detailed pricing information and discuss volume discounts, enterprise features, and contract terms.",
-                "confidence": 0.9,
-                "sources": ["📖 Service Offerings"],
-                "should_escalate": True,
-                "escalation_reason": "Pricing inquiry requiring sales team"
-            },
-            "soc2 timeline": {
-                "answer": "With Delve, SOC 2 compliance typically takes just 30 minutes for onboarding + 10-15 hours of platform setup + 1-3 weeks for audit completion. This includes a 3-month observation period for Type 2, with some customers completing in as little as 4-7 days. We have a 100% success rate for customers passing their SOC 2 audit.",
-                "confidence": 0.9,
-                "sources": ["📖 SOC 2 Compliance"],
-                "should_escalate": False
-            }
-        }
+        # Let OpenAI handle all responses intelligently - no hardcoded answers
+        self.fast_responses = {}
         
-        # Framework-specific confidence thresholds (lowered for basic queries)
+        # Framework-specific confidence thresholds (trust LLM more)
         self.confidence_thresholds = {
-            'SOC2': 0.70,
-            'HIPAA': 0.70,
-            'GDPR': 0.70,
-            'ISO27001': 0.70,
-            'general': 0.60  # Lowered from 0.65 to reduce false escalations
+            'SOC2': 0.40,
+            'HIPAA': 0.40,
+            'GDPR': 0.40,
+            'ISO27001': 0.40,
+            'general': 0.30  # Trust OpenAI LLM to make smart decisions
         }
         
         # Initialize embeddings
@@ -271,7 +251,7 @@ class DelveRAGSystem:
 INSTRUCTIONS:
 1. Base your answers primarily on the provided context
 2. Be specific and cite relevant information from the context
-3. If the context doesn't contain enough information, say so clearly
+3. If the context doesn't have enough details, say "I don't have the complete details on that in my docs right now. Let me connect you with our support team for the most accurate information."
 4. For compliance questions, provide actionable guidance when possible
 5. Mention relevant timelines, pricing, or implementation details when available
 
@@ -324,81 +304,18 @@ CONFIDENCE: [score]""")
             logger.warning("No OpenAI key found, using fallback responses")
             return self._create_simple_fallback()
     
-    def _get_ollama_llm(self):
-        """Get Ollama LLM with llama3.2:3b model. [TEMPORARILY DISABLED - TOO SLOW]"""
-        # COMMENTED OUT: Ollama takes 89+ seconds per response
-        # Keeping this method for future optimization when we have better hardware
-        logger.warning("Ollama disabled due to performance issues (89s+ per response)")
-        return self._create_simple_fallback()
     
     def _create_simple_fallback(self):
-        """Create a simple text-based fallback when both OpenAI and Ollama are unavailable."""
+        """Create a fallback that escalates when no LLM is available."""
         from langchain_community.llms.fake import FakeListLLM
         
-        # Simple responses for common scenarios
+        # Only provide this when absolutely no LLM is available
         responses = [
-            "Based on the retrieved Delve documentation, I found relevant information but recommend speaking with our team for detailed guidance. For compliance questions, our experts can provide specific implementation steps.\n\nCONFIDENCE: 0.7",
-            "I found information in our knowledge base about this topic. However, for the most accurate and up-to-date guidance, I recommend connecting with our support team who can provide personalized assistance.\n\nCONFIDENCE: 0.6",
-            "The information in our documentation suggests several approaches to this question. Our team can provide specific recommendations based on your requirements.\n\nCONFIDENCE: 0.6"
+            "I'm experiencing technical difficulties accessing my language model. Let me connect you with our support team who can provide immediate assistance.\n\nCONFIDENCE: 0.1"
         ]
         
         return FakeListLLM(responses=responses)
     
-    async def _generate_with_direct_openai(self, question: str, context: str) -> str:
-        """Generate response using direct OpenAI API (v1.0+ compatible)."""
-        generation_start = time.time()
-        logger.info(f"🚀 Using direct OpenAI for question: '{question[:50]}...'")
-        
-        try:
-            # Use the new OpenAI v1.0+ client interface
-            from openai import OpenAI
-            client = OpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"),
-                # Remove any unsupported parameters
-            )
-            
-            prompt = f"""You are Delve's expert compliance AI assistant. Use the provided context to answer questions about compliance automation, SOC2, HIPAA, GDPR, ISO27001, and Delve's services.
-
-INSTRUCTIONS:
-1. Base your answers primarily on the provided context
-2. Be specific and cite relevant information from the context
-3. If the context doesn't contain enough information, say so clearly
-4. For compliance questions, provide actionable guidance when possible
-5. Mention relevant timelines, pricing, or implementation details when available
-
-CONFIDENCE SCORING:
-- Provide a confidence score (0.0-1.0) based on how well the context supports your answer
-- High confidence (>0.8): Context directly answers the question with specific details
-- Medium confidence (0.6-0.8): Context provides relevant but incomplete information  
-- Low confidence (<0.6): Context is tangentially related or insufficient
-
-Context: {context}
-
-Question: {question}
-
-Please provide your answer followed by your confidence score in the format:
-CONFIDENCE: [score]"""
-
-            # Make API call using new interface
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a helpful compliance automation expert."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                temperature=0.1,
-                timeout=10.0
-            )
-            
-            generation_time = time.time() - generation_start
-            logger.info(f"⚡ Direct OpenAI generation took: {generation_time:.3f}s")
-            
-            return response.choices[0].message.content
-            
-        except Exception as e:
-            logger.error(f"Direct OpenAI failed: {e}")
-            raise
     
     def _get_cache_key(self, question: str, frameworks: Optional[List[str]] = None) -> str:
         """Generate cache key for query."""
@@ -431,21 +348,7 @@ CONFIDENCE: [score]"""
         logger.debug(f"Cached response for query: {cache_key[:8]}...")
     
     def _check_fast_response(self, question: str) -> Optional[Dict[str, Any]]:
-        """Check if query matches a pre-built fast response."""
-        question_clean = question.lower().strip()
-        
-        # Direct matches
-        for pattern, response in self.fast_responses.items():
-            if pattern in question_clean:
-                logger.info(f"Fast response match for: {pattern}")
-                return response.copy()
-        
-        # Fuzzy matching for common variations
-        if any(word in question_clean for word in ['what', 'what\'s', 'tell me about']) and \
-           any(word in question_clean for word in ['delve', 'company', 'platform']):
-            logger.info("Fast response: What is Delve (fuzzy match)")
-            return self.fast_responses["what is delve"].copy()
-        
+        """No more hardcoded responses - let OpenAI handle everything intelligently."""
         return None
 
     async def query(self, question: str, frameworks: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -471,11 +374,7 @@ CONFIDENCE: [score]"""
             }
         
         try:
-            # Check for fast pre-built responses first (near-instant)
-            fast_response = self._check_fast_response(question)
-            if fast_response:
-                logger.info(f"Fast response delivered in {time.time() - start_time:.2f}s")
-                return fast_response
+            # No more fast responses - trust OpenAI to be smart
             
             # Check cache
             cache_key = self._get_cache_key(question, frameworks)
@@ -502,7 +401,9 @@ CONFIDENCE: [score]"""
                 return self._get_timeout_fallback(question)
             
         except Exception as e:
+            import traceback
             logger.error(f"Error during query processing: {e}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return {
                 'answer': "I'm experiencing technical difficulties. Let me get a human agent to help you.",
                 'confidence': 0.0,
@@ -546,6 +447,7 @@ CONFIDENCE: [score]"""
             # Extract confidence score
             confidence = self._extract_confidence_score(response)
             logger.info(f"Extracted confidence score: {confidence}")
+            logger.debug(f"Response content for confidence extraction: {response[:100]}...")
             
             # Determine if escalation is needed
             should_escalate, escalation_reason = self._should_escalate(
@@ -572,44 +474,16 @@ CONFIDENCE: [score]"""
             raise
     
     def _get_timeout_fallback(self, question: str) -> Dict[str, Any]:
-        """Provide fast fallback response when query times out."""
-        logger.info("Providing timeout fallback response")
+        """Provide fallback response when query times out - let LLM handle with retrieved context."""
+        logger.info("Query timeout - providing intelligent fallback")
         
-        # Analyze question for basic categorization
-        question_lower = question.lower()
-        
-        if any(word in question_lower for word in ['pricing', 'cost', 'price']):
-            return {
-                'answer': "I'd be happy to help with pricing information! Let me connect you with our sales team who can provide detailed pricing based on your specific needs and organization size.",
-                'confidence': 0.8,
-                'sources': [],
-                'should_escalate': True,
-                'escalation_reason': "Pricing inquiry requiring sales team"
-            }
-        elif any(word in question_lower for word in ['demo', 'schedule', 'meeting']):
-            return {
-                'answer': "I'd love to help you schedule a demo! Let me connect you with our team who can set up a customized demonstration of Delve's compliance automation platform.",
-                'confidence': 0.8,
-                'sources': [],
-                'should_escalate': True,
-                'escalation_reason': "Demo request requiring sales team"
-            }
-        elif any(word in question_lower for word in ['soc2', 'soc 2', 'hipaa', 'gdpr', 'iso27001']):
-            return {
-                'answer': "I have information about compliance frameworks, but I'm experiencing a delay accessing our knowledge base. Let me connect you with our compliance experts who can provide immediate, detailed guidance.",
-                'confidence': 0.7,
-                'sources': [],
-                'should_escalate': True,
-                'escalation_reason': "Technical delay - compliance expertise needed"
-            }
-        else:
-            return {
-                'answer': "I'm experiencing a technical delay while searching our knowledge base. To ensure you get the most accurate and timely information, let me connect you with our support team who can help immediately.",
-                'confidence': 0.6,
-                'sources': [],
-                'should_escalate': True,
-                'escalation_reason': "Technical timeout - escalating for immediate assistance"
-            }
+        return {
+            'answer': "I'm experiencing a brief delay accessing our knowledge base. Let me connect you with our support team who can provide immediate assistance with your question.",
+            'confidence': 0.3,
+            'sources': [],
+            'should_escalate': True,
+            'escalation_reason': "Query timeout - escalating for immediate assistance"
+        }
     
     async def _enhanced_retrieve(self, question: str, frameworks: Optional[List[str]] = None) -> List[Document]:
         """Enhanced retrieval with framework filtering and query expansion."""
@@ -652,15 +526,7 @@ CONFIDENCE: [score]"""
             context_time = time.time() - context_start
             logger.info(f"📝 Context preparation took: {context_time:.3f}s ({len(context)} chars)")
             
-            # Try direct OpenAI first if available
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai and openai_key:
-                try:
-                    return await self._generate_with_direct_openai(question, context)
-                except Exception as openai_error:
-                    logger.warning(f"Direct OpenAI failed: {openai_error}, trying RAG chain")
-            
-            # Fallback to RAG chain
+            # Use RAG chain with OpenAI LLM
             generation_start = time.time()
             logger.info(f"🤖 Starting LLM generation for question: '{question[:50]}...'")
             response = self.rag_chain.invoke({
@@ -699,11 +565,18 @@ CONFIDENCE: [score]"""
             elif not isinstance(response, str):
                 response = str(response)
             
+            logger.debug(f"Extracting confidence from response (first 200 chars): {response[:200]}")
+            
             if "CONFIDENCE:" in response:
                 confidence_line = response.split("CONFIDENCE:")[1].strip().split()[0]
-                return float(confidence_line)
-            return 0.6  # Default medium confidence
-        except:
+                confidence = float(confidence_line)
+                logger.debug(f"Found CONFIDENCE: {confidence}")
+                return confidence
+            else:
+                logger.debug("No CONFIDENCE: found in response, using default 0.6")
+                return 0.6  # Default medium confidence
+        except Exception as e:
+            logger.debug(f"Exception in confidence extraction: {e}, using default 0.6")
             return 0.6
     
     def _should_escalate(self, confidence: float, question: str, 

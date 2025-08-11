@@ -24,6 +24,10 @@ class SlackClient:
         # Check if Slack credentials are available
         self.enabled = bool(settings.slack_bot_token and settings.slack_signing_secret)
         
+        # Initialize shared dependencies once to avoid repeated instantiation
+        self._session_manager = None
+        self._thread_manager = None
+        
         if self.enabled:
             self.client = AsyncWebClient(token=settings.slack_bot_token)
             self.app = AsyncApp(
@@ -35,6 +39,27 @@ class SlackClient:
             logger.warning("Slack credentials not provided. Slack integration disabled.")
             self.client = None
             self.app = None
+    
+    def _get_session_manager(self):
+        """Get or create SessionManager instance."""
+        if self._session_manager is None:
+            from src.core.session_manager import SessionManager
+            from src.core.config import settings
+            self._session_manager = SessionManager(
+                supabase_url=settings.supabase_url,
+                supabase_key=settings.supabase_key
+            )
+        return self._session_manager
+    
+    def _get_thread_manager(self, slack_client):
+        """Get or create SlackThreadManager instance."""
+        if self._thread_manager is None:
+            from src.integrations.slack_thread_manager import SlackThreadManager
+            self._thread_manager = SlackThreadManager(
+                slack_client=slack_client,
+                session_manager=self._get_session_manager()
+            )
+        return self._thread_manager
     
     def _setup_event_handlers(self):
         """Set up Slack event handlers."""
@@ -70,6 +95,95 @@ class SlackClient:
                 
             except Exception as e:
                 logger.error(f"Error handling message event: {e}")
+        
+        # Add button action handlers
+        @self.app.action("accept_ticket")
+        async def handle_accept_ticket(ack, body, client):
+            """Handle Accept Ticket button click."""
+            try:
+                thread_manager = self._get_thread_manager(client)
+                await thread_manager.handle_accept_ticket(ack, body, client)
+                
+            except Exception as e:
+                await ack()
+                logger.error(f"Error handling accept ticket: {e}")
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text=f"❌ Error accepting ticket: {str(e)}"
+                )
+        
+        @self.app.action("view_history")
+        async def handle_view_history(ack, body, client):
+            """Handle View Full History button click."""
+            try:
+                thread_manager = self._get_thread_manager(client)
+                await thread_manager.handle_view_history(ack, body, client)
+                
+            except Exception as e:
+                await ack()
+                logger.error(f"Error handling view history: {e}")
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text=f"❌ Error retrieving history: {str(e)}"
+                )
+        
+        @self.app.action("close_ticket")
+        async def handle_close_ticket(ack, body, client):
+            """Handle Close Ticket button click."""
+            try:
+                thread_manager = self._get_thread_manager(client)
+                await thread_manager.handle_close_ticket(ack, body, client)
+                
+            except Exception as e:
+                await ack()
+                logger.error(f"Error handling close ticket: {e}")
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text=f"❌ Error closing ticket: {str(e)}"
+                )
+        
+        # Legacy button handlers - redirect to proper thread manager workflow
+        @self.app.action("take_ownership")
+        async def handle_take_ownership(ack, body, client):
+            """Handle legacy Take Ownership button - redirect to Accept Ticket."""
+            await ack()
+            try:
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text="⚠️ This is a legacy escalation message. Please use the 'Accept Ticket' button on newer escalation messages."
+                )
+            except Exception as e:
+                logger.error(f"Error handling take ownership: {e}")
+        
+        @self.app.action("view_context")
+        async def handle_view_context(ack, body, client):
+            """Handle legacy View Context button - redirect to View History."""
+            await ack()
+            try:
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text="⚠️ This is a legacy escalation message. Please use the 'View Full History' button on newer escalation messages."
+                )
+            except Exception as e:
+                logger.error(f"Error handling view context: {e}")
+        
+        @self.app.action("schedule_meeting")
+        async def handle_schedule_meeting(ack, body, client):
+            """Handle legacy Schedule Meeting button."""
+            await ack()
+            try:
+                await client.chat_postMessage(
+                    channel=body["channel"]["id"],
+                    thread_ts=body["message"]["ts"],
+                    text="⚠️ This is a legacy escalation message. For meeting scheduling, please use the regular agent interface."
+                )
+            except Exception as e:
+                logger.error(f"Error handling schedule meeting: {e}")
     
     async def send_acknowledgment(self, message: SupportMessage) -> None:
         """Send immediate acknowledgment to user."""
@@ -134,191 +248,31 @@ class SlackClient:
         suggested_assignee: Optional[str] = None,
         escalation_context: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Send rich escalation notification with smart routing."""
+        """Log escalation notification (actual Slack posting handled by ResponderAgent to avoid duplicates)."""
+        logger.info(f"Escalation logged for message {message.message_id}: {escalation_reason}")
+        
+        # NOTE: Actual Slack escalation posting is now handled by ResponderAgent's 
+        # SlackThreadManager to avoid duplicate messages with different button schemas.
+        # This method now only logs the escalation for audit purposes.
+        
         if not self.enabled:
             logger.info(f"[TEST MODE] Would escalate message {message.message_id}: {escalation_reason}")
-            return
-            
-        try:
-            # Determine the appropriate channel based on escalation context
-            target_channel = self._determine_escalation_channel(escalation_reason, escalation_context)
-            
-            # Create rich Slack message with blocks
-            escalation_blocks = self._create_escalation_blocks(
-                message, escalation_reason, suggested_assignee, escalation_context
-            )
-            
-            # Send escalation notification
-            await self.client.chat_postMessage(
-                channel=target_channel,
-                text=f"🚨 Escalation: {escalation_reason[:50]}...",  # Fallback text
-                blocks=escalation_blocks
-            )
-            
-            logger.info(f"Sent escalation notification for message {message.message_id} to {target_channel}")
-            
-        except SlackApiError as e:
-            logger.error(f"Error sending escalation: {e}")
+        else:
+            logger.info(f"Escalation routing: {escalation_reason} -> ResponderAgent will handle Slack posting")
     
     def _determine_escalation_channel(self, escalation_reason: str, context: Optional[Dict[str, Any]] = None) -> str:
-        """Determine the appropriate Slack channel for escalation."""
+        """Determine the appropriate Slack channel for escalation (for logging purposes only)."""
         reason_lower = escalation_reason.lower()
         
-        # Sales-related escalations
-        if any(keyword in reason_lower for keyword in ['demo', 'pricing', 'sales', 'enterprise', 'contract']):
-            return "#sales-escalations"
+        # NOTE: This method is now only used for logging. Actual channel routing 
+        # is handled by ResponderAgent's SlackThreadManager.
         
-        # Technical support escalations
-        if any(keyword in reason_lower for keyword in ['api', 'integration', 'technical', 'saml', 'sso', 'authentication']):
-            return "#tech-support"
+        if any(keyword in reason_lower for keyword in ['demo', 'schedule', 'meeting', 'book']):
+            if any(keyword in reason_lower for keyword in ['book', 'schedule', 'meeting']):
+                return "#sales-activity"  # For logging only
         
-        # Compliance-related escalations
-        if any(keyword in reason_lower for keyword in ['compliance', 'audit', 'soc2', 'gdpr', 'hipaa', 'iso27001']):
-            return "#compliance-team"
-        
-        # Check context for more specific routing
-        if context:
-            meeting_type = context.get('meeting_type', '')
-            if meeting_type == 'technical_support':
-                return "#tech-support"
-            elif meeting_type in ['compliance_consultation', 'audit']:
-                return "#compliance-team"
-            elif meeting_type in ['sales_discussion', 'demo']:
-                return "#sales-escalations"
-        
-        # Default to general support escalations
-        return "#support-escalations"
+        return "#support-escalations"  # For logging only
     
-    def _create_escalation_blocks(
-        self, 
-        message: SupportMessage, 
-        escalation_reason: str,
-        suggested_assignee: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """Create rich Slack blocks for escalation notification."""
-        blocks = []
-        
-        # Header block
-        blocks.append({
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "🚨 Customer Escalation Required"
-            }
-        })
-        
-        # Main information section
-        fields = [
-            {
-                "type": "mrkdwn",
-                "text": f"*Customer Message:*\n{message.content[:300]}{'...' if len(message.content) > 300 else ''}"
-            },
-            {
-                "type": "mrkdwn", 
-                "text": f"*Escalation Reason:*\n{escalation_reason}"
-            }
-        ]
-        
-        # Add context-specific fields
-        if context:
-            if context.get('meeting_type'):
-                fields.append({
-                    "type": "mrkdwn",
-                    "text": f"*Meeting Type:*\n{context['meeting_type'].replace('_', ' ').title()}"
-                })
-            
-            if context.get('urgency') == 'high':
-                fields.append({
-                    "type": "mrkdwn",
-                    "text": f"*Priority:*\n🔴 HIGH PRIORITY"
-                })
-            
-            if context.get('timezone'):
-                fields.append({
-                    "type": "mrkdwn",
-                    "text": f"*Customer Timezone:*\n{context['timezone']}"
-                })
-        
-        blocks.append({
-            "type": "section",
-            "fields": fields
-        })
-        
-        # Customer information section
-        customer_info = []
-        if hasattr(message, 'user_name') and message.user_name:
-            customer_info.append(f"*Name:* {message.user_name}")
-        if hasattr(message, 'user_email') and message.user_email:
-            customer_info.append(f"*Email:* {message.user_email}")
-        
-        if customer_info:
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Customer Information:*\n{' • '.join(customer_info)}"
-                }
-            })
-        
-        # Suggested assignee section
-        if suggested_assignee:
-            blocks.append({
-                "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": f"*Suggested Assignee:* <@{suggested_assignee}>"
-                }
-            })
-        
-        # Action buttons
-        blocks.append({
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "Take Ownership"
-                    },
-                    "style": "primary",
-                    "action_id": "take_ownership",
-                    "value": message.message_id
-                },
-                {
-                    "type": "button", 
-                    "text": {
-                        "type": "plain_text",
-                        "text": "View Full Context"
-                    },
-                    "action_id": "view_context",
-                    "value": message.message_id
-                },
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "Schedule Meeting"
-                    },
-                    "action_id": "schedule_meeting",
-                    "value": message.message_id
-                }
-            ]
-        })
-        
-        # Metadata section
-        timestamp = message.timestamp.strftime("%Y-%m-%d %H:%M:%S EST")
-        blocks.append({
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"📅 Escalated at {timestamp} | 🆔 Message ID: {message.message_id}"
-                }
-            ]
-        })
-        
-        return blocks
     
     async def send_meeting_notification(
         self, 
@@ -352,14 +306,16 @@ class SlackClient:
     
     def _get_meeting_notification_channel(self, meeting_type: str) -> str:
         """Get the appropriate channel for meeting notifications."""
+        # Consolidated approach: All meeting bookings go to sales-activity
+        # Support-related meetings handled through escalations
         channel_mapping = {
             'demo': '#sales-activity',
             'sales_discussion': '#sales-activity', 
-            'technical_support': '#tech-support',
-            'compliance_consultation': '#compliance-team',
-            'onboarding_session': '#customer-success'
+            'technical_support': '#sales-activity',  # All meetings go to sales
+            'compliance_consultation': '#sales-activity',  # All meetings go to sales
+            'onboarding_session': '#sales-activity'  # All meetings go to sales
         }
-        return channel_mapping.get(meeting_type, '#general-activity')
+        return channel_mapping.get(meeting_type, '#sales-activity')
     
     def _create_meeting_notification_blocks(
         self, 

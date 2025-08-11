@@ -444,6 +444,67 @@ class GoogleCalendarService:
     def get_meeting_type_by_number(self, selection_number: int) -> str:
         """Get meeting type key by selection number (1-based)."""
         return self.meeting_type_manager.get_meeting_type_by_number(selection_number)
+    
+    async def get_busy_times(self, start_time: datetime, end_time: datetime) -> List[Tuple[datetime, datetime]]:
+        """
+        Get busy time periods from Google Calendar within the specified range.
+        
+        Args:
+            start_time: Start of the time range to check
+            end_time: End of the time range to check
+            
+        Returns:
+            List of tuples (busy_start, busy_end) representing busy periods
+        """
+        if not self.is_available():
+            logger.warning("Calendar service not available, returning empty busy times")
+            return []
+        
+        try:
+            # Convert times to RFC3339 format for Google Calendar API
+            time_min = start_time.isoformat()
+            time_max = end_time.isoformat()
+            
+            logger.info(f"🔍 Checking calendar busy times from {start_time} to {end_time}")
+            
+            # Query the freebusy API
+            body = {
+                'timeMin': time_min,
+                'timeMax': time_max,
+                'items': [{'id': self.calendar_id}],
+                'timeZone': 'UTC'
+            }
+            
+            freebusy_result = self.service.freebusy().query(body=body).execute()
+            
+            # Extract busy periods
+            busy_times = []
+            calendars = freebusy_result.get('calendars', {})
+            primary_calendar = calendars.get(self.calendar_id, {})
+            busy_periods = primary_calendar.get('busy', [])
+            
+            logger.info(f"Found {len(busy_periods)} busy periods in calendar")
+            
+            for period in busy_periods:
+                busy_start_str = period.get('start')
+                busy_end_str = period.get('end')
+                
+                if busy_start_str and busy_end_str:
+                    # Parse the datetime strings
+                    busy_start = datetime.fromisoformat(busy_start_str.replace('Z', '+00:00'))
+                    busy_end = datetime.fromisoformat(busy_end_str.replace('Z', '+00:00'))
+                    
+                    busy_times.append((busy_start, busy_end))
+                    logger.debug(f"Busy period: {busy_start} to {busy_end}")
+            
+            return busy_times
+            
+        except HttpError as e:
+            logger.error(f"Google Calendar API error getting busy times: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting calendar busy times: {e}")
+            return []
 
 
 # Global instance

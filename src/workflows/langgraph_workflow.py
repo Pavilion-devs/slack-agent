@@ -8,6 +8,7 @@ import asyncio
 from typing import Dict, Any, List, Optional, Literal
 from datetime import datetime
 from enum import Enum
+import os
 
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
@@ -68,9 +69,15 @@ class LangGraphWorkflow:
     def __init__(self):
         self.workflow_name = "langgraph_multi_agent_workflow"
         self.graph = None
+        self.responder_agent = None  # Will be initialized with dependency injection
         self.compiled_graph = None
         self.memory = MemorySaver()
         self._build_graph()
+    
+    def set_responder_agent(self, responder_agent):
+        """Set responder agent for escalation handling (dependency injection)."""
+        self.responder_agent = responder_agent
+        logger.info("Responder agent connected to workflow")
         
     def _build_graph(self):
         """Build the LangGraph workflow."""
@@ -107,10 +114,26 @@ class LangGraphWorkflow:
         logger.info("LangGraph workflow compiled successfully")
     
     async def _detect_intent(self, state: WorkflowState) -> WorkflowState:
-        """Node 1: Detect intent from the message using sophisticated analysis."""
+        """Node 1: Detect intent from the message using sophisticated analysis with moderation."""
         logger.info(f"Intent detection for message: {state.message.message_id}")
         
         try:
+            # First, run moderation check
+            from src.utils.moderation import moderation_filter
+            moderation_result = moderation_filter.analyze_message(state.message.content)
+            state.intent_metadata = {"moderation": moderation_result}
+            
+            # If hostile, handle immediately
+            if moderation_result['is_hostile']:
+                state.intent = IntentType.ESCALATION
+                state.intent_confidence = 1.0
+                state.intent_metadata.update({
+                    "escalation_type": "moderation", 
+                    "suggested_response": moderation_result['suggested_response']
+                })
+                logger.info("Message flagged as hostile - escalating")
+                return state
+            
             content_lower = state.message.content.lower()
             
             # Import the intent classifier
@@ -122,28 +145,33 @@ class LangGraphWorkflow:
             
             state.intent = IntentType(intent_result.get('intent', 'unknown'))
             state.intent_confidence = intent_result.get('confidence', 0.0)
-            state.intent_metadata = intent_result.get('metadata', {})
+            state.intent_metadata.update(intent_result.get('metadata', {}))
+            
+            # Override scheduling for connection requests
+            if moderation_result.get('is_connection_request') and state.intent == IntentType.SCHEDULING:
+                state.intent = IntentType.ESCALATION
+                state.intent_metadata["escalation_type"] = "connection_request"
+                logger.info("Connection request detected - escalating instead of scheduling")
             
             logger.info(f"Intent detected: {state.intent} (confidence: {state.intent_confidence})")
             
         except Exception as e:
             logger.error(f"Intent detection failed: {e}")
             # Fallback to rule-based classification
-            state.intent, state.intent_confidence = self._fallback_intent_detection(content_lower)
+            state.intent, state.intent_confidence = self._fallback_intent_detection(state.message.content.lower())
             state.intent_metadata = {"fallback": True, "error": str(e)}
         
         return state
     
     def _fallback_intent_detection(self, content_lower: str) -> tuple[IntentType, float]:
         """Fallback rule-based intent detection."""
-        # Explicit scheduling patterns (more restrictive than before)
+        # Very explicit scheduling patterns (much more restrictive)
         explicit_scheduling = [
-            r'\b(?:can|could|would|let\'s)\s+(?:we|you|i)\s+(?:schedule|book|arrange)',
-            r'\bi\s+(?:want|need|would like)\s+to\s+(?:schedule|book|arrange)',
-            r'\bschedule\s+(?:a|an|the)?\s*(?:demo|meeting|call)',
-            r'\bbook\s+(?:a|an|the)?\s*(?:demo|meeting|call)',
-            r'\b(?:set up|setup)\s+(?:a|an|the)?\s*(?:demo|meeting|call)',
-            r'\bwhen\s+(?:can|could|are)\s+(?:we|you)\s+(?:meet|schedule)',
+            r'\b(?:can|could|would)\s+(?:we|you|i)\s+(?:schedule|book)\s+(?:a|an|the)\s*(?:demo|meeting|call)',
+            r'\bi\s+(?:want|need|would like)\s+to\s+(?:schedule|book)\s+(?:a|an|the)\s*(?:demo|meeting|call)',
+            r'\bschedule\s+(?:a|an|the)\s+(?:demo|meeting|call)\s*(?:with|for)',
+            r'\bbook\s+(?:a|an|the)\s+(?:demo|meeting|call)\s*(?:with|for)',
+            r'\b(?:when|what time)\s+(?:can|could|are)\s+(?:we|you)\s+(?:meet|schedule|have)\s+(?:a|the)\s*(?:demo|call)',
         ]
         
         # Technical support patterns
@@ -162,9 +190,12 @@ class LangGraphWorkflow:
         
         import re
         
-        # Check scheduling first
+        # Check scheduling first (but lower confidence if mixed with other concerns)
         for pattern in explicit_scheduling:
             if re.search(pattern, content_lower):
+                # Lower confidence if it mentions audit, compliance issues
+                if any(word in content_lower for word in ['audit', 'compliance', 'certificate', 'done in', 'months', 'weeks']):
+                    return IntentType.INFORMATION, 0.75  # Treat as information request instead
                 return IntentType.SCHEDULING, 0.85
         
         # Check technical support
@@ -180,6 +211,25 @@ class LangGraphWorkflow:
         # Default to information with low confidence
         return IntentType.INFORMATION, 0.60
     
+    def _detect_multi_intent(self, content_lower: str) -> bool:
+        """Detect if message contains multiple intents that should be handled sequentially."""
+        # Common multi-intent patterns
+        multi_patterns = [
+            # Information + scheduling
+            (r'\b(send|give|show|provide)\s+.*\b(guide|doc|info|material|link)\b.*\b(schedule|demo|book|meeting)\b', True),
+            (r'\b(if\s+.*\s+looks?\s+good|if\s+.*\s+works?)\s+.*\b(schedule|demo|book|meeting)\b', True),
+            # Multiple requests with "and"
+            (r'\b(can\s+you|could\s+you)\s+.*\s+and\s+.*\b(schedule|demo|book|meeting)\b', True),
+        ]
+        
+        import re
+        for pattern, _ in multi_patterns:
+            if re.search(pattern, content_lower):
+                logger.info(f"Multi-intent pattern matched: {pattern}")
+                return True
+        
+        return False
+    
     async def _plan_execution(self, state: WorkflowState) -> WorkflowState:
         """Node 2: Plan which subgraphs to execute based on intent and confidence."""
         logger.info(f"Planning execution for intent: {state.intent}")
@@ -189,13 +239,36 @@ class LangGraphWorkflow:
             "primary_subgraph": None,
             "fallback_subgraph": None,
             "parallel_execution": False,
-            "confidence_threshold": 0.70
+            "confidence_threshold": 0.70,
+            "sequential_execution": False,
+            "multi_intent": False
         }
         
-        # Plan based on intent
+        # Check for multi-intent queries
+        content_lower = state.message.content.lower()
+        is_multi_intent = self._detect_multi_intent(content_lower)
+        
+        if is_multi_intent:
+            state.execution_plan["multi_intent"] = True
+            state.execution_plan["sequential_execution"] = True
+            # For "send guide + schedule demo", do RAG first then scheduler
+            if any(word in content_lower for word in ['guide', 'doc', 'documentation', 'info', 'material']) and \
+               any(word in content_lower for word in ['schedule', 'demo', 'book', 'meeting']):
+                state.selected_subgraphs = ["rag_agent", "demo_scheduler"]
+                state.execution_plan["primary_subgraph"] = "rag_agent"
+                state.execution_plan["secondary_subgraph"] = "demo_scheduler"
+                logger.info("Multi-intent detected: information + scheduling")
+                return state
+        
+        # Plan based on single intent
         if state.intent == IntentType.SCHEDULING and state.intent_confidence > 0.70:
             state.selected_subgraphs = ["demo_scheduler"]
             state.execution_plan["primary_subgraph"] = "demo_scheduler"
+            
+        elif state.intent == IntentType.ESCALATION:
+            # Handle escalation (including moderation cases)
+            state.selected_subgraphs = ["escalation"]
+            state.execution_plan["primary_subgraph"] = "escalation"
             
         elif state.intent == IntentType.TECHNICAL_SUPPORT and state.intent_confidence > 0.70:
             state.selected_subgraphs = ["technical_support"]
@@ -232,6 +305,8 @@ class LangGraphWorkflow:
         for subgraph_name in state.selected_subgraphs:
             if subgraph_name == "demo_scheduler":
                 tasks.append(self._execute_demo_scheduler_subgraph(state))
+            elif subgraph_name == "escalation":
+                tasks.append(self._execute_escalation_subgraph(state))
             elif subgraph_name == "technical_support":
                 tasks.append(self._execute_technical_support_subgraph(state))
             elif subgraph_name == "rag_agent":
@@ -276,6 +351,32 @@ class LangGraphWorkflow:
         agent = DemoSchedulerAgent()
         return await agent.process_message(state.message)
     
+    async def _execute_escalation_subgraph(self, state: WorkflowState) -> AgentResponse:
+        """Execute the escalation subgraph for moderation and human handoff."""
+        from src.agents.escalation_agent import EscalationAgent
+        
+        # Check for suggested response from moderation
+        moderation_data = state.intent_metadata.get('moderation', {})
+        suggested_response = moderation_data.get('suggested_response')
+        
+        if suggested_response:
+            # Use moderation's suggested response
+            from src.models.schemas import AgentResponse
+            return AgentResponse(
+                agent_name="moderation_escalation",
+                response_text=suggested_response,
+                confidence_score=1.0,
+                sources=["Moderation System"],
+                should_escalate=True,
+                escalation_reason="Content moderation - user requires human assistance",
+                requires_human_input=True,
+                metadata={"escalation_type": "moderation", "moderation_data": moderation_data}
+            )
+        else:
+            # Regular escalation
+            agent = EscalationAgent()
+            return await agent.process_message(state.message)
+    
     async def _execute_technical_support_subgraph(self, state: WorkflowState) -> AgentResponse:
         """Execute the technical support subgraph."""
         from src.agents.technical_support import TechnicalSupportAgent
@@ -308,17 +409,108 @@ class LangGraphWorkflow:
         return "skip"
     
     async def _human_approval_gate(self, state: WorkflowState) -> WorkflowState:
-        """Node 4: Human approval gate (placeholder for now)."""
-        logger.info("Human approval gate - auto-approving for MVP")
+        """Node 4: Human approval gate with responder agent integration."""
+        logger.info("Human approval gate - checking for escalation needs")
         
-        # TODO: Implement actual human approval mechanism
-        # For now, we'll auto-approve but log that approval was requested
-        state.requires_human_approval = True
+        # Check if we need to escalate based on subgraph results
+        should_escalate = False
+        escalation_reason = None
+        best_response = None
         
-        # In a real implementation, this would:
-        # 1. Send approval request to Slack/UI
-        # 2. Wait for human response
-        # 3. Continue based on approval/rejection
+        if state.subgraph_results:
+            # Find any result that requires escalation
+            for subgraph_name, result in state.subgraph_results.items():
+                if result.should_escalate:
+                    should_escalate = True
+                    escalation_reason = result.escalation_reason
+                    best_response = result
+                    break
+            
+            # If no explicit escalation, check for low confidence responses
+            if not should_escalate:
+                best_response = self._select_best_response(state)
+                if best_response and best_response.confidence_score < 0.5:
+                    should_escalate = True
+                    escalation_reason = f"Low confidence response ({best_response.confidence_score:.2f}) from {best_response.agent_name}"
+        else:
+            # No subgraph results - definitely need escalation
+            should_escalate = True
+            escalation_reason = "No valid responses from any agent"
+        
+        # If escalation needed and responder agent available, escalate
+        if should_escalate and self.responder_agent:
+            try:
+                logger.info(f"Escalating to responder agent: {escalation_reason}")
+                
+                # Prepare conversation history from workflow state
+                conversation_history = []
+                if hasattr(state, 'conversation_history'):
+                    conversation_history = state.conversation_history
+                else:
+                    # Build history from current message and any context
+                    conversation_history = [
+                        {
+                            'sender': 'User',
+                            'content': state.message.content,
+                            'timestamp': state.message.timestamp.isoformat(),
+                            'message_type': 'user_message'
+                        }
+                    ]
+                    
+                    # Add subgraph results as context
+                    for subgraph_name, result in state.subgraph_results.items():
+                        if result.response_text:
+                            conversation_history.append({
+                                'sender': f'AI Agent ({result.agent_name})',
+                                'content': result.response_text,
+                                'confidence': result.confidence_score,
+                                'message_type': 'ai_response'
+                            })
+                
+                # Escalate through responder agent
+                escalation_response = await self.responder_agent.process_escalation_request(
+                    support_message=state.message,
+                    escalation_reason=escalation_reason,
+                    conversation_history=conversation_history
+                )
+                
+                # Update state with escalation response
+                state.final_response = escalation_response
+                state.requires_human_approval = True
+                
+                logger.info(f"Escalation processed with session ID: {escalation_response.metadata.get('session_id')}")
+                
+            except Exception as e:
+                logger.error(f"Error during escalation: {e}")
+                # Fallback to standard escalation response
+                state.final_response = AgentResponse(
+                    agent_name="langgraph_workflow",
+                    response_text="I'm connecting you with our support team. You'll hear back from a human agent shortly.",
+                    confidence_score=1.0,
+                    should_escalate=True,
+                    escalation_reason=f"Escalation system error: {str(e)}",
+                    requires_human_input=True
+                )
+                state.requires_human_approval = True
+        
+        elif should_escalate and not self.responder_agent:
+            # No responder agent available - use fallback escalation
+            logger.warning("Escalation needed but no responder agent available")
+            state.final_response = AgentResponse(
+                agent_name="langgraph_workflow",
+                response_text="I'm unable to fully assist with your request. Please contact our support team for help.",
+                confidence_score=0.5,
+                should_escalate=True,
+                escalation_reason="No responder agent available",
+                requires_human_input=True
+            )
+            state.requires_human_approval = True
+        
+        else:
+            # No escalation needed - continue with best response
+            state.requires_human_approval = False
+            if not state.final_response and best_response:
+                state.final_response = best_response
         
         return state
     
@@ -327,22 +519,31 @@ class LangGraphWorkflow:
         logger.info("Finalizing response")
         
         try:
-            # Select the best response from subgraph results
-            best_response = self._select_best_response(state)
-            
-            if best_response:
-                state.final_response = best_response
+            # Handle multi-intent sequential responses
+            if state.execution_plan.get("multi_intent") and state.execution_plan.get("sequential_execution"):
+                combined_response = self._combine_sequential_responses(state)
+                if combined_response:
+                    state.final_response = combined_response
+                else:
+                    # Fallback to best single response
+                    state.final_response = self._select_best_response(state)
             else:
-                # Create fallback response
-                state.final_response = AgentResponse(
-                    agent_name="langgraph_workflow",
-                    response_text="I'm unable to process your request at the moment. Let me connect you with our support team.",
-                    confidence_score=0.0,
-                    sources=[],
-                    should_escalate=True,
-                    escalation_reason="No valid subgraph results",
-                    metadata={"workflow_error": True}
-                )
+                # Select the best response from subgraph results
+                best_response = self._select_best_response(state)
+                
+                if best_response:
+                    state.final_response = best_response
+                else:
+                    # Create fallback response
+                    state.final_response = AgentResponse(
+                        agent_name="langgraph_workflow",
+                        response_text="I'm unable to process your request at the moment. Let me connect you with our support team.",
+                        confidence_score=0.0,
+                        sources=[],
+                        should_escalate=True,
+                        escalation_reason="No valid subgraph results",
+                        metadata={"workflow_error": True}
+                    )
             
             state.processing_completed = datetime.now()
             
@@ -389,6 +590,47 @@ class LangGraphWorkflow:
                 best_result = result
         
         return best_result
+    
+    def _combine_sequential_responses(self, state: WorkflowState) -> Optional[AgentResponse]:
+        """Combine responses from sequential multi-intent execution."""
+        rag_response = state.subgraph_results.get("rag_agent")
+        scheduler_response = state.subgraph_results.get("demo_scheduler")
+        
+        if not rag_response or not scheduler_response:
+            return None
+        
+        # For "send guide + schedule demo" pattern
+        if rag_response and scheduler_response:
+            # Check if RAG has good information to share
+            if rag_response.confidence_score >= 0.5 and not rag_response.should_escalate:
+                # Combine: RAG info + scheduling
+                combined_text = (
+                    f"{rag_response.response_text}\n\n"
+                    f"---\n\n"
+                    f"{scheduler_response.response_text}"
+                )
+                
+                from src.models.schemas import AgentResponse
+                return AgentResponse(
+                    agent_name="multi_intent_workflow",
+                    response_text=combined_text,
+                    confidence_score=min(rag_response.confidence_score, scheduler_response.confidence_score),
+                    sources=rag_response.sources + scheduler_response.sources,
+                    should_escalate=rag_response.should_escalate or scheduler_response.should_escalate,
+                    escalation_reason=None,
+                    requires_human_input=scheduler_response.requires_human_input,
+                    metadata={
+                        "multi_intent": True,
+                        "combined_agents": ["rag_agent", "demo_scheduler"],
+                        "rag_confidence": rag_response.confidence_score,
+                        "scheduler_confidence": scheduler_response.confidence_score
+                    }
+                )
+            else:
+                # RAG didn't have good info, just do scheduling
+                return scheduler_response
+        
+        return None
     
     async def process_message(self, message: SupportMessage) -> WorkflowState:
         """Main entry point: Process a message through the LangGraph workflow."""
