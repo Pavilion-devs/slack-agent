@@ -42,8 +42,8 @@ def slack_events():
             
             # Skip bot messages and handle user messages
             if event.get('type') == 'message' and not event.get('bot_id'):
-                # Process message asynchronously
-                asyncio.create_task(process_slack_message(event))
+                # Process message asynchronously using Thread (Flask is sync)
+                Thread(target=lambda: asyncio.run(process_slack_message(event))).start()
         
         return jsonify({'status': 'ok'})
         

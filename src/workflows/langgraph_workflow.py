@@ -571,19 +571,19 @@ class LangGraphWorkflow:
         if primary_subgraph and primary_subgraph in state.subgraph_results:
             primary_result = state.subgraph_results[primary_subgraph]
             
-            # Use primary result if confidence is good and no escalation
-            if primary_result.confidence_score >= 0.70 and not primary_result.should_escalate:
-                return primary_result
+            # Always use primary result if available (including escalations)
+            # The primary subgraph was selected for a reason by the intent classifier
+            return primary_result
         
-        # Otherwise, select highest confidence result
+        # Fallback: select highest confidence result
         best_result = None
-        best_score = 0.0
+        best_score = -1.0  # Allow negative scores to ensure we always pick something
         
         for subgraph_name, result in state.subgraph_results.items():
-            # Prioritize non-escalating results
+            # Score based on confidence, with slight bonus for non-escalating results
             score = result.confidence_score
             if not result.should_escalate:
-                score += 0.1  # Bonus for not escalating
+                score += 0.1  # Small bonus for direct answers
             
             if score > best_score:
                 best_score = score

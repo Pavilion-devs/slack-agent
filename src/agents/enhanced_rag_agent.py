@@ -252,9 +252,7 @@ class EnhancedRAGAgent(BaseAgent):
         # For general queries, check if we should be more helpful
         if confidence < 0.7 and not suppress_sales:
             return (
-                "I want to make sure you get the most accurate information for your question. "
-                "Let me connect you with our support team who can provide detailed, personalized guidance.\n\n"
-                f"In the meantime, here's what I found:\n\n{base_answer}"
+                f"{base_answer}"
             )
         
         # For legal/privacy queries, keep it clean without sales pitch

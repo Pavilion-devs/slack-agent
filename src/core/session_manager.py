@@ -41,6 +41,9 @@ class ConversationSession:
     history: List[Dict[str, Any]]
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    ai_disabled: bool = False  # New: Track if AI is disabled due to human takeover
+    human_assigned_at: Optional[datetime] = None  # New: When human took over
+    assigned_agent_name: Optional[str] = None  # New: Human agent display name
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for database storage."""
@@ -55,7 +58,10 @@ class ConversationSession:
             'escalation_reason': self.escalation_reason,
             'history': json.dumps(self.history),
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'ai_disabled': self.ai_disabled,
+            'human_assigned_at': self.human_assigned_at.isoformat() if self.human_assigned_at else None,
+            'assigned_agent_name': self.assigned_agent_name
         }
     
     @classmethod

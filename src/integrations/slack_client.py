@@ -187,8 +187,12 @@ class SlackClient:
     
     async def send_acknowledgment(self, message: SupportMessage) -> None:
         """Send immediate acknowledgment to user."""
-        if not self.enabled or message.channel_id in ["DASHBOARD_TEST", "TERMINAL_CHAT"]:
-            logger.info(f"[TEST MODE] Would send acknowledgment for message {message.message_id}")
+        # Enhanced test mode detection for all non-production channels
+        test_channels = ["DASHBOARD_TEST", "TERMINAL_CHAT", "chainlit_test", "chainlit_production"]
+        fake_channels = [ch for ch in [message.channel_id] if ch.startswith(("C123", "chainlit_", "test_"))]
+        
+        if not self.enabled or message.channel_id in test_channels or fake_channels:
+            logger.info(f"[TEST MODE] Would send acknowledgment for message {message.message_id} to channel {message.channel_id}")
             return
             
         acknowledgment_templates = [
@@ -220,8 +224,12 @@ class SlackClient:
         sources: Optional[List[str]] = None
     ) -> None:
         """Send AI-generated response to user."""
-        if not self.enabled or message.channel_id in ["DASHBOARD_TEST", "TERMINAL_CHAT"]:
-            logger.info(f"[TEST MODE] Would send response for message {message.message_id}: {response_text[:100]}...")
+        # Enhanced test mode detection for all non-production channels
+        test_channels = ["DASHBOARD_TEST", "TERMINAL_CHAT", "chainlit_test", "chainlit_production"]
+        fake_channels = [ch for ch in [message.channel_id] if ch.startswith(("C123", "chainlit_", "test_"))]
+        
+        if not self.enabled or message.channel_id in test_channels or fake_channels:
+            logger.info(f"[TEST MODE] Would send response for message {message.message_id} to channel {message.channel_id}: {response_text[:100]}...")
             return
             
         try:

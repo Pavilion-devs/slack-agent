@@ -565,18 +565,18 @@ CONFIDENCE: [score]""")
             elif not isinstance(response, str):
                 response = str(response)
             
-            logger.debug(f"Extracting confidence from response (first 200 chars): {response[:200]}")
+            logger.info(f"[DEBUG] Extracting confidence from response (first 200 chars): {response[:200]}")
             
             if "CONFIDENCE:" in response:
                 confidence_line = response.split("CONFIDENCE:")[1].strip().split()[0]
                 confidence = float(confidence_line)
-                logger.debug(f"Found CONFIDENCE: {confidence}")
+                logger.info(f"[DEBUG] Found CONFIDENCE: {confidence}")
                 return confidence
             else:
-                logger.debug("No CONFIDENCE: found in response, using default 0.6")
+                logger.info(f"[DEBUG] No CONFIDENCE: found in response, using default 0.6")
                 return 0.6  # Default medium confidence
         except Exception as e:
-            logger.debug(f"Exception in confidence extraction: {e}, using default 0.6")
+            logger.info(f"[DEBUG] Exception in confidence extraction: {e}, using default 0.6")
             return 0.6
     
     def _should_escalate(self, confidence: float, question: str, 
