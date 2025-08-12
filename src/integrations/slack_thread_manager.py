@@ -158,22 +158,53 @@ class SlackThreadManager:
         return blocks
     
     def _format_conversation_history(self, messages: List[Dict[str, Any]]) -> str:
-        """Format conversation history for display."""
+        """Format conversation history for display with clean formatting."""
         if not messages:
             return "_No recent messages_"
         
         formatted_messages = []
-        for msg in messages[-3:]:  # Show last 3 messages
-            sender = msg.get('sender', 'User')
-            content = msg.get('content', '')[:200]  # Truncate long messages
-            timestamp = msg.get('timestamp', '')
-            
-            if len(content) > 200:
-                content += "..."
-            
-            formatted_messages.append(f"*{sender}:* {content}")
         
-        return "\n".join(formatted_messages)
+        # Show all messages from the conversation for full context
+        for msg in messages:
+            sender = msg.get('sender', 'User')
+            content = msg.get('content', '')
+            
+            # Clean up sender names
+            if sender == 'AI Agent':
+                sender = 'AI Agent'
+            elif sender in ['customer', 'Customer', 'User']:
+                sender = 'Customer'  
+            elif sender == 'human_agent':
+                sender = 'Human Agent'
+            else:
+                # Handle any other sender formats
+                sender = sender.replace('👤', '').replace('🤖', '').strip()
+                if not sender:
+                    sender = 'Customer'
+            
+            # Clean up content - remove conversation context artifacts
+            if 'CONVERSATION CONTEXT:' in content:
+                # Extract just the current user message
+                if 'CURRENT USER MESSAGE:' in content:
+                    content = content.split('CURRENT USER MESSAGE:')[-1].strip()
+                else:
+                    # If no current message marker, take the content after context
+                    lines = content.split('\n')
+                    # Find the last line that looks like actual user content
+                    for line in reversed(lines):
+                        line = line.strip()
+                        if line and not line.startswith('User:') and not line.startswith('AI Assistant:'):
+                            content = line
+                            break
+            
+            # Truncate very long messages for readability
+            if len(content) > 200:
+                content = content[:200] + "..."
+            
+            # Format as clean message
+            formatted_messages.append(f"**{sender}:** {content}")
+        
+        return "\n\n".join(formatted_messages)
     
     async def handle_accept_ticket(
         self, 
@@ -270,7 +301,7 @@ class SlackThreadManager:
             )
     
     def _format_full_history(self, messages: List[Dict[str, Any]]) -> str:
-        """Format full conversation history."""
+        """Format full conversation history with clean formatting."""
         if not messages:
             return "_No conversation history available_"
         
@@ -280,16 +311,40 @@ class SlackThreadManager:
             content = msg.get('content', '')
             timestamp = msg.get('timestamp', '')
             
+            # Clean up sender names
+            if sender == 'AI Agent':
+                sender = 'AI Agent'
+            elif sender in ['customer', 'Customer', 'User']:
+                sender = 'Customer'
+            elif sender == 'human_agent':
+                sender = 'Human Agent'
+            else:
+                sender = sender.replace('👤', '').replace('🤖', '').strip()
+                if not sender:
+                    sender = 'Customer'
+            
+            # Clean up content - remove conversation context artifacts
+            if 'CONVERSATION CONTEXT:' in content:
+                if 'CURRENT USER MESSAGE:' in content:
+                    content = content.split('CURRENT USER MESSAGE:')[-1].strip()
+                else:
+                    lines = content.split('\n')
+                    for line in reversed(lines):
+                        line = line.strip()
+                        if line and not line.startswith('User:') and not line.startswith('AI Assistant:'):
+                            content = line
+                            break
+            
             # Format timestamp if available
             time_str = ""
             if timestamp:
                 try:
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    time_str = f" - {dt.strftime('%H:%M')}"
+                    time_str = f" ({dt.strftime('%H:%M')})"
                 except:
                     pass
             
-            formatted_messages.append(f"{i}. *{sender}*{time_str}: {content}")
+            formatted_messages.append(f"{i}. **{sender}**{time_str}: {content}")
         
         return "\n\n".join(formatted_messages)
     

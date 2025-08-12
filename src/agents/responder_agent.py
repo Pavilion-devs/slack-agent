@@ -80,14 +80,35 @@ class ResponderAgent:
                 session = existing_session
                 logger.info(f"Added message to existing session {session.session_id}")
             else:
+                # Ensure original customer message is included in history
+                enhanced_history = conversation_history.copy()
+                
+                # Add original customer message if not already present
+                customer_message_found = any(
+                    msg.get('content') == support_message.content and 
+                    msg.get('sender') in ['Customer', 'customer', 'User'] 
+                    for msg in enhanced_history
+                )
+                
+                if not customer_message_found:
+                    customer_msg = {
+                        'sender': 'Customer',
+                        'content': support_message.content,
+                        'timestamp': support_message.timestamp.isoformat(),
+                        'platform': self._detect_platform(support_message.channel_id),
+                        'message_type': 'original_question'
+                    }
+                    # Insert at beginning to show the original question first
+                    enhanced_history.insert(0, customer_msg)
+                
                 # Create new escalation session
                 session = await self.session_manager.create_session(
                     user_id=support_message.user_id,
                     channel_id=support_message.channel_id,
                     escalation_reason=escalation_reason,
-                    history=conversation_history
+                    history=enhanced_history
                 )
-                logger.info(f"Created new escalation session {session.session_id}")
+                logger.info(f"Created new escalation session {session.session_id} with {len(enhanced_history)} messages in history")
             
             # Prepare user context for Slack thread
             user_context = {

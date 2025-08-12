@@ -11,6 +11,9 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import json
 
+# Fix tokenizers parallelism warning
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import chainlit as cl
 from langchain.schema.runnable.config import RunnableConfig
 from fastapi import Request
@@ -227,7 +230,7 @@ async def poll_for_notifications():
                             with open(file_path, 'r') as f:
                                 notification = json.load(f)
                             
-                            # Process human message notifications
+                            # Process different types of notifications
                             if notification['type'] == 'human_message':
                                 message_data = notification['message']
                                 agent_name = message_data.get('sender_name', 'Human Agent')
@@ -241,6 +244,20 @@ async def poll_for_notifications():
                                 
                                 # Update last seen timestamp to avoid duplicates
                                 cl.user_session.set("last_human_message_seen", message_data.get('timestamp'))
+                            
+                            elif notification['type'] == 'session_closure':
+                                # Display closure message and mark session as closed
+                                closure_message = notification.get('message', 'Ticket closed. Thank you!')
+                                
+                                await cl.Message(
+                                    content=f"🔒 **Support Ticket Closed**\n\n{closure_message}"
+                                ).send()
+                                
+                                # Mark the session as closed in user session
+                                cl.user_session.set("ticket_closed", True)
+                                cl.user_session.set("closed_session_id", notification['session_id'])
+                                
+                                logger.info(f"Session {notification['session_id']} closed - UI updated")
                             
                             processed_files.add(file_path)
                             

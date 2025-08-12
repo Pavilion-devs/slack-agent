@@ -223,6 +223,35 @@ async def notify_chainlit_new_message(session_id: str, message_data: dict):
     except Exception as e:
         logger.error(f"Error creating Chainlit notification: {e}")
 
+async def notify_chainlit_session_closure(session_id: str):
+    """Notify Chainlit interface about session closure."""
+    try:
+        import json
+        import os
+        from datetime import datetime
+        
+        # Create notifications directory if it doesn't exist
+        notifications_dir = "/tmp/chainlit_notifications"
+        os.makedirs(notifications_dir, exist_ok=True)
+        
+        # Create closure notification
+        notification = {
+            'type': 'session_closure',
+            'session_id': session_id,
+            'message': 'Ticket closed. For further enquiries, please start a new session. Thank you!',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Write notification to file (Chainlit will poll for these)
+        notification_file = f"{notifications_dir}/closure_{session_id}_{datetime.now().timestamp()}.json"
+        with open(notification_file, 'w') as f:
+            json.dump(notification, f)
+            
+        logger.info(f"Created session closure notification: {notification_file}")
+        
+    except Exception as e:
+        logger.error(f"Error creating session closure notification: {e}")
+
 async def notify_chainlit_session_closed(session_id: str):
     """Notify Chainlit interface that a session has been closed."""
     try:
@@ -242,8 +271,8 @@ async def notify_chainlit_session_closed(session_id: str):
         else:
             logger.warning("Session manager not available - cannot add closure message")
         
-        # TODO: Implement real-time notification to active Chainlit sessions
-        # This would show the closure message and disable the input
+        # Create notification file for session closure
+        await notify_chainlit_session_closure(session_id)
         logger.info(f"Session closure notification added for session: {session_id}")
         
     except Exception as e:
