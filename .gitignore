@@ -3,3 +3,13 @@ venv
 __pycache__
 claude.md
 .env.example
+prd.txt
+setup_calendar_auth.py
+.DS_Store
+.pytest_cache/
+.chainlit/
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
